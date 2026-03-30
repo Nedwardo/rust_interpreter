@@ -17,9 +17,9 @@ impl Display for LiteralValue {
     }
 }
 
-pub struct Token<'a> {
+pub struct Token<'token_lifetime> {
     pub token_type: TokenType,
-    pub lexeme: &'a str,
+    pub lexeme: &'token_lifetime str,
     pub literal: Option<LiteralValue>,
     pub line: usize,
 }
