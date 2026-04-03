@@ -1,9 +1,11 @@
 use crate::interpreter_error::InterpreterError;
+use crate::keywords::get_keyword;
 use crate::token::{LiteralValue, Token};
 use crate::token_type::TokenType;
 use crate::token_type::TokenType::{
-    BANG, BANG_EQUAL, COMMA, DOT, EOF, EQUAL, EQUAL_EQUAL, GREATER, GREATER_EQUAL, LEFT_BRACE,
-    LEFT_PAREN, LESS, LESS_EQUAL, MINUS, PLUS, RIGHT_BRACE, RIGHT_PAREN, SEMICOLON, SLASH, STAR,
+    BANG, BANG_EQUAL, COMMA, DOT, EOF, EQUAL, EQUAL_EQUAL, GREATER, GREATER_EQUAL, IDENTIFIER,
+    LEFT_BRACE, LEFT_PAREN, LESS, LESS_EQUAL, MINUS, NUMBER, PLUS, RIGHT_BRACE, RIGHT_PAREN,
+    SEMICOLON, SLASH, STAR, STRING,
 };
 
 pub struct Scanner<'scanner_lt> {
@@ -100,11 +102,41 @@ impl<'source_lt> Scanner<'source_lt> {
                     Ok(Some(self.build_token(SLASH)))
                 }
             }
-            _ => Err(InterpreterError {
-                line: self.line,
-                message: "Unexpected character",
-                error_location: None,
-            }),
+            ' ' | '\r' | '\t' => Ok(None),
+            '\n' => {
+                self.line += 1;
+                Ok(None)
+            }
+            '"' => {
+                self.scan_string()?;
+                let lexeme = self.get_current_lexeme();
+                let value = LiteralValue::String(lexeme);
+                Ok(Some(self.build_literal_token(STRING, lexeme, value)))
+            }
+            _ => {
+                if character.is_ascii_digit() {
+                    self.scan_number();
+                    let lexeme = self.get_current_lexeme();
+                    let value = LiteralValue::Number(lexeme.parse::<f64>().unwrap());
+                    Ok(Some(self.build_literal_token(NUMBER, lexeme, value)))
+                } else if character.is_ascii_alphabetic() || character == '_' {
+                    self.scan_identifier();
+                    let lexeme = self.get_current_lexeme();
+                    let token_type = get_keyword(lexeme).unwrap_or(IDENTIFIER);
+                    let value = LiteralValue::String(lexeme);
+                    Ok(Some(self.build_literal_token(
+                        token_type,
+                        self.get_current_lexeme(),
+                        value,
+                    )))
+                } else {
+                    Err(InterpreterError {
+                        line: self.line,
+                        message: "Unexpected character",
+                        error_location: None,
+                    })
+                }
+            }
         }
     }
 
@@ -121,12 +153,13 @@ impl<'source_lt> Scanner<'source_lt> {
     fn build_literal_token<'scanner_lt>(
         &'scanner_lt self,
         token_type: TokenType,
-        literal: Option<LiteralValue>,
+        lexeme: &'source_lt str,
+        literal: LiteralValue<'source_lt>,
     ) -> Token<'source_lt> {
         Token {
             token_type,
-            lexeme: self.get_current_lexeme(),
-            literal,
+            lexeme,
+            literal: Some(literal),
             line: self.line,
         }
     }
@@ -140,6 +173,9 @@ impl<'source_lt> Scanner<'source_lt> {
     }
     fn peek(&self) -> Option<char> {
         self.source.chars().nth(self.current + 1)
+    }
+    fn peek_next(&self) -> Option<char> {
+        self.source.chars().nth(self.current + 2)
     }
 
     fn match_next(&mut self, expected: char) -> bool {
@@ -158,6 +194,43 @@ impl<'source_lt> Scanner<'source_lt> {
             if next_char == expected {
                 break;
             }
+            self.next();
+        }
+    }
+
+    fn scan_string(&mut self) -> Result<(), InterpreterError> {
+        self.iter_till('"');
+        match self.next() {
+            Some(_) => Ok(()),
+            None => Err(InterpreterError {
+                line: self.line,
+                message: ("Unterminated string"),
+                error_location: None,
+            }),
+        }
+    }
+    fn scan_number(&mut self) {
+        while let Some(next_char) = self.peek()
+            && next_char.is_ascii_digit()
+        {
+            self.next();
+        }
+        if self.peek() == Some('.')
+            && let Some(next_digit) = self.peek_next()
+            && next_digit.is_ascii_digit()
+        {
+            self.next();
+            while let Some(next_char) = self.peek()
+                && next_char.is_ascii_digit()
+            {
+                self.next();
+            }
+        }
+    }
+    fn scan_identifier(&mut self) {
+        while let Some(next_char) = self.peek()
+            && next_char.is_ascii_alphanumeric()
+        {
             self.next();
         }
     }

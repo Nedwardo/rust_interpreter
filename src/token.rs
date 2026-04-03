@@ -1,12 +1,12 @@
 use crate::token_type::TokenType;
 use std::fmt::{Display, Formatter, Result};
 
-pub enum LiteralValue {
-    String(String),
+pub enum LiteralValue<'a> {
+    String(&'a str),
     Number(f64),
 }
 
-impl Display for LiteralValue {
+impl<'a> Display for LiteralValue<'a> {
     fn fmt(&self, formatter: &mut Formatter) -> Result {
         let value: &dyn Display = match self {
             LiteralValue::String(value) => value,
@@ -17,10 +17,10 @@ impl Display for LiteralValue {
     }
 }
 
-pub struct Token<'token_lifetime> {
+pub struct Token<'a> {
     pub token_type: TokenType,
-    pub lexeme: &'token_lifetime str,
-    pub literal: Option<LiteralValue>,
+    pub lexeme: &'a str,
+    pub literal: Option<LiteralValue<'a>>,
     pub line: usize,
 }
 

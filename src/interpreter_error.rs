@@ -33,7 +33,7 @@ impl error::Error for InterpreterError {
 
 impl InterpreterError {
     fn report(&self) {
-        eprintln!("{}", self.to_string())
+        eprintln!("{}", self)
     }
 }
 pub fn error(line: u32, message: &str) {

@@ -1,4 +1,5 @@
 mod interpreter_error;
+mod keywords;
 mod read_file_error;
 mod scanner;
 mod token;
