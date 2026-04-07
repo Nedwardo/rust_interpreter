@@ -50,7 +50,6 @@ impl<'source_lt> Scanner<'source_lt> {
         character: char,
     ) -> Result<Option<Token<'source_lt>>, InterpreterError> {
         self.current_lex_start = self.current - 1;
-        let token: TokenType;
         match character {
             '(' => Ok(Some(self.build_token(LEFT_PAREN))),
             ')' => Ok(Some(self.build_token(RIGHT_PAREN))),
@@ -62,38 +61,14 @@ impl<'source_lt> Scanner<'source_lt> {
             '+' => Ok(Some(self.build_token(PLUS))),
             ';' => Ok(Some(self.build_token(SEMICOLON))),
             '*' => Ok(Some(self.build_token(STAR))),
-            '!' => {
-                if self.match_next('=') {
-                    token = BANG_EQUAL
-                } else {
-                    token = BANG;
-                }
-                Ok(Some(self.build_token(token)))
-            }
-            '=' => {
-                if self.match_next('=') {
-                    token = EQUAL_EQUAL;
-                } else {
-                    token = EQUAL;
-                }
-                Ok(Some(self.build_token(token)))
-            }
-            '<' => {
-                if self.match_next('=') {
-                    token = LESS_EQUAL;
-                } else {
-                    token = LESS;
-                }
-                Ok(Some(self.build_token(token)))
-            }
-            '>' => {
-                if self.match_next('=') {
-                    token = GREATER_EQUAL;
-                } else {
-                    token = GREATER;
-                }
-                Ok(Some(self.build_token(token)))
-            }
+            '!' if self.match_next('=') => Ok(Some(self.build_token(BANG_EQUAL))),
+            '!' => Ok(Some(self.build_token(BANG))),
+            '=' if self.match_next('=') => Ok(Some(self.build_token(EQUAL_EQUAL))),
+            '=' => Ok(Some(self.build_token(EQUAL))),
+            '<' if self.match_next('=') => Ok(Some(self.build_token(LESS_EQUAL))),
+            '<' => Ok(Some(self.build_token(LESS))),
+            '>' if self.match_next('=') => Ok(Some(self.build_token(GREATER_EQUAL))),
+            '>' => Ok(Some(self.build_token(GREATER))),
             '/' => {
                 if self.match_next('/') {
                     self.iter_till('\n');

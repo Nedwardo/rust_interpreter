@@ -1,22 +1,24 @@
+mod expressions;
 mod interpreter_error;
 mod keywords;
 mod read_file_error;
 mod scanner;
 mod token;
 mod token_type;
+mod parser;
 use read_file_error::ReadFileError;
 use scanner::build_scanner;
-use std::env::{Args, args};
+use std::env::args;
 use std::fs::read_to_string;
 use std::io::{Write, stdin, stdout};
 use std::path::Path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args: Args = args();
+    let args: Vec<String> = args().collect();
 
-    match args.len() {
-        1 => run_prompt(),
-        2 => run_file(&args.nth(1).unwrap())?,
+    match &args[..] {
+        [_] => run_prompt(),
+        [_, file] => run_file(file)?,
         _ => {
             return Err("Usage: jlox [script]".into());
         }
