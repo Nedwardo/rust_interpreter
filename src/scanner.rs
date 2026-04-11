@@ -1,5 +1,7 @@
+use crate::double_peekable::DoublePeekable;
 use crate::interpreter_error::InterpreterError;
 use crate::keywords::get_keyword;
+use crate::string_iter::{StringIter, StringTake};
 use crate::token::{LiteralValue, Token};
 use crate::token_type::TokenType;
 use crate::token_type::TokenType::{
@@ -9,9 +11,7 @@ use crate::token_type::TokenType::{
 };
 
 pub struct Scanner<'scanner_lt> {
-    source: &'scanner_lt str,
-    current_lex_start: usize,
-    current: usize,
+    iter: DoublePeekable<StringIter<'scanner_lt>>,
     line: usize,
 }
 
@@ -20,9 +20,7 @@ where
     'source_lt: 'scanner_lt,
 {
     Scanner {
-        source,
-        current_lex_start: 0,
-        current: 0,
+        iter: DoublePeekable::new(StringIter { string: source }.peekable()),
         line: 0,
     }
 }
@@ -30,7 +28,7 @@ where
 impl<'source_lt> Scanner<'source_lt> {
     pub fn scan_tokens<'scanner_lt>(&'scanner_lt mut self) -> Vec<Token<'source_lt>> {
         let mut tokens = Vec::new();
-        while let Some(character) = self.next() {
+        while let Some(character) = self.peek() {
             let result = self.scan_token(character);
             if let Ok(Some(token)) = result {
                 tokens.push(token);
@@ -49,7 +47,6 @@ impl<'source_lt> Scanner<'source_lt> {
         &'scanner_lt mut self,
         character: char,
     ) -> Result<Option<Token<'source_lt>>, InterpreterError> {
-        self.current_lex_start = self.current - 1;
         match character {
             '(' => Ok(Some(self.build_token(LEFT_PAREN))),
             ')' => Ok(Some(self.build_token(RIGHT_PAREN))),
@@ -61,14 +58,16 @@ impl<'source_lt> Scanner<'source_lt> {
             '+' => Ok(Some(self.build_token(PLUS))),
             ';' => Ok(Some(self.build_token(SEMICOLON))),
             '*' => Ok(Some(self.build_token(STAR))),
-            '!' if self.match_next('=') => Ok(Some(self.build_token(BANG_EQUAL))),
+
+            '!' if self.match_next('=') => Ok(Some(self.build_sized_token(BANG_EQUAL, 2))),
             '!' => Ok(Some(self.build_token(BANG))),
-            '=' if self.match_next('=') => Ok(Some(self.build_token(EQUAL_EQUAL))),
+            '=' if self.match_next('=') => Ok(Some(self.build_sized_token(EQUAL_EQUAL, 2))),
             '=' => Ok(Some(self.build_token(EQUAL))),
-            '<' if self.match_next('=') => Ok(Some(self.build_token(LESS_EQUAL))),
+            '<' if self.match_next('=') => Ok(Some(self.build_sized_token(LESS_EQUAL, 2))),
             '<' => Ok(Some(self.build_token(LESS))),
-            '>' if self.match_next('=') => Ok(Some(self.build_token(GREATER_EQUAL))),
+            '>' if self.match_next('=') => Ok(Some(self.build_token(GREATER_EQUAL, 2))),
             '>' => Ok(Some(self.build_token(GREATER))),
+
             '/' => {
                 if self.match_next('/') {
                     self.iter_till('\n');
@@ -116,9 +115,17 @@ impl<'source_lt> Scanner<'source_lt> {
     }
 
     fn build_token<'scanner_lt>(&'scanner_lt self, token_type: TokenType) -> Token<'source_lt> {
+        self.build_sized_token(token_type, 1)
+    }
+
+    fn build_sized_token<'scanner_lt>(
+        &'scanner_lt self,
+        token_type: TokenType,
+        size: usize,
+    ) -> Token<'source_lt> {
         let token: Token = Token {
             token_type,
-            lexeme: self.get_current_lexeme(),
+            lexeme: StringTake::new(self.iter, size).as_str()?,
             literal: None,
             line: self.line,
         };
@@ -140,37 +147,6 @@ impl<'source_lt> Scanner<'source_lt> {
     }
     fn get_current_lexeme<'scanner_lt>(&'scanner_lt self) -> &'source_lt str {
         &self.source[self.current_lex_start..self.current]
-    }
-
-    fn next(&mut self) -> Option<char> {
-        self.current += 1;
-        self.source.chars().nth(self.current)
-    }
-    fn peek(&self) -> Option<char> {
-        self.source.chars().nth(self.current + 1)
-    }
-    fn peek_next(&self) -> Option<char> {
-        self.source.chars().nth(self.current + 2)
-    }
-
-    fn match_next(&mut self, expected: char) -> bool {
-        if let Some(actual) = self.peek()
-            && actual == expected
-        {
-            self.current += 1;
-            true
-        } else {
-            false
-        }
-    }
-
-    fn iter_till(&mut self, expected: char) {
-        while let Some(next_char) = self.peek() {
-            if next_char == expected {
-                break;
-            }
-            self.next();
-        }
     }
 
     fn scan_string(&mut self) -> Result<(), InterpreterError> {

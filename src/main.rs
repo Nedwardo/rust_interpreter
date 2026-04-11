@@ -1,18 +1,21 @@
+#![feature(iter_next_chunk)]
+
+mod double_peekable;
 mod expressions;
 mod interpreter_error;
 mod keywords;
+mod parser;
 mod read_file_error;
 mod scanner;
+mod string_iter;
 mod token;
 mod token_type;
-mod parser;
 use read_file_error::ReadFileError;
 use scanner::build_scanner;
 use std::env::args;
 use std::fs::read_to_string;
 use std::io::{Write, stdin, stdout};
 use std::path::Path;
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = args().collect();
 

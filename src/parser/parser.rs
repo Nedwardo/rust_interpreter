@@ -1,43 +1,44 @@
-use crate::expressions::expr::{Expr, Binary};
-use std::vec::Vec;
-use std::vec;
+use crate::expressions::expr::{Binary, Expr};
 use crate::token::Token;
 use crate::token_type::TokenType;
 use crate::token_type::TokenType::{BANG_EQUAL, EQUAL_EQUAL};
+use std::vec;
+use std::vec::Vec;
 
-pub struct Parser<'parser_lt, 'token_lt>{
+pub struct Parser<'parser_lt, 'token_lt> {
     tokens: Vec<Token<'token_lt>>,
-    current: usize
+    current: usize,
 }
 
-pub fn build_parser<'token_lt, 'parser_lt>(tokens: Vec<Token<'token_lt>>) -> Parser<'token_lt>
+pub fn build_parser<'token_lt, 'parser_lt>(
+    tokens: Vec<Token<'token_lt>>,
+) -> Parser<'parser_lt, 'token_lt>
 where
     'token_lt: 'parser_lt,
 {
-    Parser {
-        tokens,
-        current: 0
-    }
+    Parser { tokens, current: 0 }
 }
 
 impl<'parser_lt, 'token_lt> Parser<'parser_lt, 'token_lt> {
-    pub fn expression(&self) -> &dyn Expr{
-        return self.equality()
+    pub fn expression(&self) -> &dyn Expr {
+        return self.equality();
     }
 
-    pub fn equality(&self) -> Expr {
+    pub fn equality(&self) -> &dyn Expr {
         let expr = self.comparison();
 
         while self.match_token(vec![BANG_EQUAL, EQUAL_EQUAL]) {
             let operator = self.previous();
             let right = self.comparison();
             let expr = Binary {
-                expr, operator, right
+                expr,
+                operator,
+                right,
             };
         }
 
-    expr
-  }
+        expr
+    }
 
     fn match_token(&self, token_types: Vec<TokenType>) -> bool {
         for token_type in token_types.iter() {
@@ -53,6 +54,6 @@ impl<'parser_lt, 'token_lt> Parser<'parser_lt, 'token_lt> {
         if self.isAtEnd() {
             return false;
         }
-    self.peek().token_type == token_type
+        self.peek().token_type == token_type
     }
-  }
+}
