@@ -1,5 +1,9 @@
+use crate::double_peekable::DoublePeekable;
+use std::iter::Peekable;
+
 pub struct StringIter<'a> {
     pub string: &'a str,
+    pub peeked: Option<&'a char>,
 }
 
 impl<'a> Iterator for StringIter<'a> {
@@ -13,17 +17,18 @@ impl<'a> Iterator for StringIter<'a> {
     }
 }
 
+impl<'a> Peekable for StringIter<'a> {}
+
 pub struct StringTake<'b> {
-    iter: StringIter<'b>,
+    iter: DoublePeekable<StringIter<'b>>,
     n: usize,
 }
 
 impl<'b> StringTake<'b> {
-    pub fn new(iter: StringIter<'b>, n: usize) -> StringTake<'b> {
+    pub fn from_double_peekable(iter: DoublePeekable<StringIter<'b>>, n: usize) -> StringTake<'b> {
         StringTake { iter, n }
     }
     pub fn as_str(&mut self) -> Option<&'b str> {
-        // SAFETY: `StringIter` is only made from a str, which guarantees the iter is valid UTF-8.
         let start = self.iter.string;
 
         for _ in 0..self.n {

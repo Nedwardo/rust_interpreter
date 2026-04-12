@@ -149,3 +149,6 @@ where
 {
     PeekWhile { iter, f }
 }
+
+
+## TODO need to implement double peekable for String, or find another way of building &str from char
