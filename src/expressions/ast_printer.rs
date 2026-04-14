@@ -1,5 +1,5 @@
-use super::expr_visitor::ExprVisitor;
 use super::expr::{Binary, Expr, Grouping, Literal, Unary};
+use super::expr_visitor::ExprVisitor;
 
 pub struct AstPrinter {}
 

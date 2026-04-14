@@ -1,17 +1,14 @@
-#![feature(iter_next_chunk)]
-
-mod double_peekable;
 mod expressions;
 mod interpreter_error;
 mod keywords;
-mod parser;
+// mod parser;
 mod read_file_error;
 mod scanner;
-mod string_iter;
 mod token;
 mod token_type;
+mod tokenizer;
 use read_file_error::ReadFileError;
-use scanner::build_scanner;
+use scanner::Scanner;
 use std::env::args;
 use std::fs::read_to_string;
 use std::io::{Write, stdin, stdout};
@@ -56,10 +53,10 @@ fn run_prompt() {
 }
 
 fn run(file: &str) {
-    let mut scanner = build_scanner(file);
+    let mut scanner = Scanner::new(file);
     let tokens = scanner.scan_tokens();
 
-    for token in tokens.iter() {
-        println!("{token}")
-    }
+    // for token in tokens.iter() {
+    //     println!("{token}")
+    // }
 }

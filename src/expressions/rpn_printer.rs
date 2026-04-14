@@ -1,5 +1,5 @@
-use super::expr_visitor::ExprVisitor;
 use super::expr::{Binary, Expr, Grouping, Literal, Unary};
+use super::expr_visitor::ExprVisitor;
 
 pub struct RpnPrinter {}
 
@@ -44,19 +44,19 @@ impl RpnPrinter {
 
 #[cfg(test)]
 mod tests {
-    use super::{RpnPrinter, Binary, Literal};
+    use super::{Binary, Literal, RpnPrinter};
     use crate::token::LiteralValue::Number;
     use crate::token::Token;
-    use crate::token_type::TokenType::{MINUS, STAR, PLUS};
+    use crate::token_type::TokenType::{MINUS, PLUS, STAR};
     #[test]
     fn test_expression() {
         let expression = Binary {
             operator: Token {
-                    token_type: STAR,
-                    lexeme: "*",
-                    literal: None,
-                    line: 1,
-                },
+                token_type: STAR,
+                lexeme: "*",
+                literal: None,
+                line: 1,
+            },
             left: &Binary {
                 operator: Token {
                     token_type: PLUS,
@@ -64,8 +64,8 @@ mod tests {
                     literal: None,
                     line: 1,
                 },
-                left: &Literal {value: Number(1.0)},
-                right: &Literal {value: Number(2.0)},
+                left: &Literal { value: Number(1.0) },
+                right: &Literal { value: Number(2.0) },
             },
             right: &Binary {
                 operator: Token {
@@ -74,8 +74,8 @@ mod tests {
                     literal: None,
                     line: 1,
                 },
-                left: &Literal {value: Number(4.0)},
-                right: &Literal {value: Number(3.0)},
+                left: &Literal { value: Number(4.0) },
+                right: &Literal { value: Number(3.0) },
             },
         };
 

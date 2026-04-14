@@ -1,188 +1,194 @@
-use crate::double_peekable::DoublePeekable;
 use crate::interpreter_error::InterpreterError;
 use crate::keywords::get_keyword;
-use crate::string_iter::{StringIter, StringTake};
 use crate::token::{LiteralValue, Token};
 use crate::token_type::TokenType;
-use crate::token_type::TokenType::{
-    BANG, BANG_EQUAL, COMMA, DOT, EOF, EQUAL, EQUAL_EQUAL, GREATER, GREATER_EQUAL, IDENTIFIER,
-    LEFT_BRACE, LEFT_PAREN, LESS, LESS_EQUAL, MINUS, NUMBER, PLUS, RIGHT_BRACE, RIGHT_PAREN,
-    SEMICOLON, SLASH, STAR, STRING,
-};
+use crate::token_type::TokenType as TT;
+use crate::tokenizer::Tokenizer;
 
-pub struct Scanner<'scanner_lt> {
-    iter: DoublePeekable<StringIter<'scanner_lt>>,
+pub struct Scanner<'a> {
+    iter: Tokenizer<'a>,
     line: usize,
 }
 
-pub fn build_scanner<'scanner_lt, 'source_lt>(source: &'scanner_lt str) -> Scanner<'scanner_lt>
-where
-    'source_lt: 'scanner_lt,
-{
-    Scanner {
-        iter: DoublePeekable::new(StringIter { string: source }.peekable()),
-        line: 0,
-    }
+pub struct ScanResult<'a> {
+    pub tokens: Vec<Token<'a>>,
+    pub errors: Vec<InterpreterError>,
 }
 
-impl<'source_lt> Scanner<'source_lt> {
-    pub fn scan_tokens<'scanner_lt>(&'scanner_lt mut self) -> Vec<Token<'source_lt>> {
+impl<'a> Scanner<'a> {
+    pub fn new(source: &'a str) -> Scanner<'a> {
+        Scanner {
+            iter: Tokenizer::new(source),
+            line: 1,
+        }
+    }
+
+    pub fn scan_tokens(&mut self) -> ScanResult<'a> {
         let mut tokens = Vec::new();
-        while let Some(character) = self.peek() {
-            let result = self.scan_token(character);
-            if let Ok(Some(token)) = result {
-                tokens.push(token);
+        let mut errors = Vec::new();
+        while let Some(character) = self.iter.first() {
+            if let Some(res) = self.scan_token(character) {
+                match res {
+                    Ok(token) => tokens.push(token),
+                    Err(err) => errors.push(err),
+                }
             }
         }
         tokens.push(Token {
-            token_type: EOF,
+            token_type: TT::EOF,
             lexeme: "",
             literal: None,
             line: self.line,
         });
-        tokens
+        ScanResult { tokens, errors }
     }
 
-    fn scan_token<'scanner_lt>(
-        &'scanner_lt mut self,
-        character: char,
-    ) -> Result<Option<Token<'source_lt>>, InterpreterError> {
+    fn scan_token(&mut self, character: char) -> Option<Result<Token<'a>, InterpreterError>> {
         match character {
-            '(' => Ok(Some(self.build_token(LEFT_PAREN))),
-            ')' => Ok(Some(self.build_token(RIGHT_PAREN))),
-            '{' => Ok(Some(self.build_token(LEFT_BRACE))),
-            '}' => Ok(Some(self.build_token(RIGHT_BRACE))),
-            ',' => Ok(Some(self.build_token(COMMA))),
-            '.' => Ok(Some(self.build_token(DOT))),
-            '-' => Ok(Some(self.build_token(MINUS))),
-            '+' => Ok(Some(self.build_token(PLUS))),
-            ';' => Ok(Some(self.build_token(SEMICOLON))),
-            '*' => Ok(Some(self.build_token(STAR))),
+            '(' => Some(Ok(self.build_sized_token(TT::LEFT_PAREN, 1))),
+            ')' => Some(Ok(self.build_sized_token(TT::RIGHT_PAREN, 1))),
+            '{' => Some(Ok(self.build_sized_token(TT::LEFT_BRACE, 1))),
+            '}' => Some(Ok(self.build_sized_token(TT::RIGHT_BRACE, 1))),
+            ',' => Some(Ok(self.build_sized_token(TT::COMMA, 1))),
+            '.' => Some(Ok(self.build_sized_token(TT::DOT, 1))),
+            '-' => Some(Ok(self.build_sized_token(TT::MINUS, 1))),
+            '+' => Some(Ok(self.build_sized_token(TT::PLUS, 1))),
+            ';' => Some(Ok(self.build_sized_token(TT::SEMICOLON, 1))),
+            '*' => Some(Ok(self.build_sized_token(TT::STAR, 1))),
 
-            '!' if self.match_next('=') => Ok(Some(self.build_sized_token(BANG_EQUAL, 2))),
-            '!' => Ok(Some(self.build_token(BANG))),
-            '=' if self.match_next('=') => Ok(Some(self.build_sized_token(EQUAL_EQUAL, 2))),
-            '=' => Ok(Some(self.build_token(EQUAL))),
-            '<' if self.match_next('=') => Ok(Some(self.build_sized_token(LESS_EQUAL, 2))),
-            '<' => Ok(Some(self.build_token(LESS))),
-            '>' if self.match_next('=') => Ok(Some(self.build_token(GREATER_EQUAL, 2))),
-            '>' => Ok(Some(self.build_token(GREATER))),
+            '!' => Some(Ok(self.build_compound('=', TT::BANG_EQUAL, TT::BANG))),
+            '=' => Some(Ok(self.build_compound('=', TT::EQUAL_EQUAL, TT::EQUAL))),
+            '<' => Some(Ok(self.build_compound('=', TT::LESS_EQUAL, TT::LESS))),
+            '>' => Some(Ok(self.build_compound('=', TT::GREATER_EQUAL, TT::GREATER))),
 
             '/' => {
-                if self.match_next('/') {
-                    self.iter_till('\n');
-                    Ok(None)
+                if self.iter.second() == Some('/') {
+                    let _ = self.iter.consume_till('\n');
+                    // Doesn't need MultiLineTokenInfo because it's not multi line yet
+                    None
                 } else {
-                    Ok(Some(self.build_token(SLASH)))
+                    Some(Ok(self.build_sized_token(TT::SLASH, 1)))
                 }
             }
-            ' ' | '\r' | '\t' => Ok(None),
+            ' ' | '\r' | '\t' => None,
             '\n' => {
                 self.line += 1;
-                Ok(None)
+                None
             }
-            '"' => {
-                self.scan_string()?;
-                let lexeme = self.get_current_lexeme();
-                let value = LiteralValue::String(lexeme);
-                Ok(Some(self.build_literal_token(STRING, lexeme, value)))
-            }
+            '"' => Some(self.build_string()),
             _ => {
                 if character.is_ascii_digit() {
-                    self.scan_number();
-                    let lexeme = self.get_current_lexeme();
-                    let value = LiteralValue::Number(lexeme.parse::<f64>().unwrap());
-                    Ok(Some(self.build_literal_token(NUMBER, lexeme, value)))
+                    Some(self.build_number())
                 } else if character.is_ascii_alphabetic() || character == '_' {
-                    self.scan_identifier();
-                    let lexeme = self.get_current_lexeme();
-                    let token_type = get_keyword(lexeme).unwrap_or(IDENTIFIER);
-                    let value = LiteralValue::String(lexeme);
-                    Ok(Some(self.build_literal_token(
-                        token_type,
-                        self.get_current_lexeme(),
-                        value,
-                    )))
+                    Some(Ok(self.build_identifier()))
                 } else {
-                    Err(InterpreterError {
+                    let _ = self.iter.consume_chars(1);
+                    Some(Err(InterpreterError {
                         line: self.line,
                         message: "Unexpected character",
-                        error_location: None,
-                    })
+                        error_location: None, // TODO fix this, should use value
+                    }))
                 }
             }
         }
     }
 
-    fn build_token<'scanner_lt>(&'scanner_lt self, token_type: TokenType) -> Token<'source_lt> {
-        self.build_sized_token(token_type, 1)
+    fn build_sized_token(&mut self, token_type: TokenType, size: usize) -> Token<'a> {
+        let lexeme = self.iter.consume_chars(size);
+        self.build_token(token_type, lexeme, None)
     }
 
-    fn build_sized_token<'scanner_lt>(
-        &'scanner_lt self,
+    fn build_token(
+        &self,
         token_type: TokenType,
-        size: usize,
-    ) -> Token<'source_lt> {
-        let token: Token = Token {
-            token_type,
-            lexeme: StringTake::new(self.iter, size).as_str()?,
-            literal: None,
-            line: self.line,
-        };
-        token
-    }
-
-    fn build_literal_token<'scanner_lt>(
-        &'scanner_lt self,
-        token_type: TokenType,
-        lexeme: &'source_lt str,
-        literal: LiteralValue<'source_lt>,
-    ) -> Token<'source_lt> {
+        lexeme: &'a str,
+        literal: Option<LiteralValue<'a>>,
+    ) -> Token<'a> {
         Token {
             token_type,
             lexeme,
-            literal: Some(literal),
+            literal,
             line: self.line,
         }
     }
-    fn get_current_lexeme<'scanner_lt>(&'scanner_lt self) -> &'source_lt str {
-        &self.source[self.current_lex_start..self.current]
+
+    fn build_compound(
+        &mut self,
+        char_flag: char,
+        two_char_token: TokenType,
+        one_char_token: TokenType,
+    ) -> Token<'a> {
+        if self.iter.second() == Some(char_flag) {
+            self.build_sized_token(two_char_token, 2)
+        } else {
+            self.build_sized_token(one_char_token, 1)
+        }
     }
 
-    fn scan_string(&mut self) -> Result<(), InterpreterError> {
-        self.iter_till('"');
-        match self.next() {
-            Some(_) => Ok(()),
-            None => Err(InterpreterError {
-                line: self.line,
-                message: ("Unterminated string"),
-                error_location: None,
-            }),
-        }
+    fn build_string(&mut self) -> Result<Token<'a>, InterpreterError> {
+        let (lex_result, lines) = self.iter.consume_string();
+        let lexeme = lex_result.ok_or(InterpreterError {
+            line: self.line,
+            message: "Unterminated string",
+            error_location: None, // TODO fix this, should use value
+        })?;
+
+        let value = LiteralValue::String(&lexeme[1..lexeme.len() - 1]);
+        let token = Ok(self.build_token(TT::STRING, lexeme, Some(value)));
+        self.line += lines;
+        token
     }
-    fn scan_number(&mut self) {
-        while let Some(next_char) = self.peek()
-            && next_char.is_ascii_digit()
-        {
-            self.next();
+
+    fn build_number(&mut self) -> Result<Token<'a>, InterpreterError> {
+        let lexeme = self.iter.consume_number();
+        let value = LiteralValue::Number(
+            lexeme
+                .parse::<f64>()
+                .expect("Tokenizer guarantees valid float syntax"),
+        );
+        Ok(self.build_token(TT::NUMBER, lexeme, Some(value)))
+    }
+
+    fn build_identifier(&mut self) -> Token<'a> {
+        let lexeme = self.iter.consume_identifier();
+        let token_type = get_keyword(lexeme).unwrap_or(TT::IDENTIFIER);
+        self.build_token(token_type, lexeme, None)
+    }
+}
+
+impl<'a> Tokenizer<'a> {
+    fn consume_string(&mut self) -> (Option<&'a str>, usize) {
+        let mut lines = 0;
+        let mut total_bytes = 0;
+        let mut result = self.peek_while(|c| !['\n', '"'].contains(&c));
+
+        while result.character == Some('\n') {
+            lines += 1;
+            total_bytes += result.bytes + '\n'.len_utf8();
+            result = self.peek_while_from(|c| !['\n', '"'].contains(&c), total_bytes);
         }
-        if self.peek() == Some('.')
-            && let Some(next_digit) = self.peek_next()
-            && next_digit.is_ascii_digit()
-        {
-            self.next();
-            while let Some(next_char) = self.peek()
-                && next_char.is_ascii_digit()
-            {
-                self.next();
+
+        total_bytes += result.bytes;
+        let output = result.character.map(|_| self.consume(total_bytes));
+        (output, lines)
+    }
+
+    fn consume_number(&mut self) -> &'a str {
+        let integer_part = self.peek_while(|c| c.is_ascii_digit());
+        let mut width = integer_part.bytes;
+
+        if integer_part.character == Some('.') {
+            let after_dot = self.peek_while_from(|c| c.is_ascii_digit(), width + '.'.len_utf8());
+            // Don't consume the '.' there are numbers after it
+            if after_dot.bytes > 0 {
+                width += '.'.len_utf8() + after_dot.bytes;
             }
         }
+
+        self.consume(width)
     }
-    fn scan_identifier(&mut self) {
-        while let Some(next_char) = self.peek()
-            && next_char.is_ascii_alphanumeric()
-        {
-            self.next();
-        }
+
+    fn consume_identifier(&mut self) -> &'a str {
+        self.consume_while(|c| c.is_ascii_alphanumeric() || c == '_')
     }
 }
