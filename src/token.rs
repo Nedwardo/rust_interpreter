@@ -1,6 +1,7 @@
 use crate::token_type::TokenType;
 use std::fmt::{Display, Formatter, Result};
 
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum LiteralValue<'a> {
     String(&'a str),
     Number(f64),
@@ -17,6 +18,7 @@ impl<'a> Display for LiteralValue<'a> {
     }
 }
 
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub struct Token<'a> {
     pub token_type: TokenType,
     pub lexeme: &'a str,

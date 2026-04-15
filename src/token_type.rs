@@ -2,6 +2,7 @@ use std::fmt::{Display, Formatter, Result};
 
 #[allow(non_camel_case_types)]
 #[allow(clippy::upper_case_acronyms)]
+#[derive(Debug, PartialEq, Copy, Clone)]
 pub enum TokenType {
     // Single-character tokens.
     LEFT_PAREN,
