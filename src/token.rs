@@ -24,6 +24,22 @@ pub struct Token<'a> {
     pub line: usize,
 }
 
+impl<'a> Token<'a> {
+    pub fn new(
+        token_type: TokenType,
+        lexeme: &'a str,
+        literal: Option<LiteralValue<'a>>,
+        line: usize,
+    ) -> Self {
+        Token {
+            token_type,
+            lexeme,
+            literal,
+            line,
+        }
+    }
+}
+
 impl<'a> Display for Token<'a> {
     fn fmt(&self, formatter: &mut Formatter) -> Result {
         write!(

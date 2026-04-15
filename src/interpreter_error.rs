@@ -2,13 +2,13 @@ use std::error;
 use std::fmt::{Display, Formatter, Result};
 
 #[derive(Debug)]
-pub struct InterpreterError {
+pub struct InterpreterError<'a> {
     pub line: usize,
     pub message: &'static str,
-    pub error_location: Option<&'static str>,
+    pub error_location: Option<&'a str>,
 }
 
-impl Display for InterpreterError {
+impl<'a> Display for InterpreterError<'a> {
     fn fmt(&self, formatter: &mut Formatter) -> Result {
         match self.error_location {
             Some(error_location) => {
@@ -25,13 +25,13 @@ impl Display for InterpreterError {
     }
 }
 
-impl error::Error for InterpreterError {
+impl<'a> error::Error for InterpreterError<'a> {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         None
     }
 }
 
-impl InterpreterError {
+impl<'a> InterpreterError<'a> {
     fn report(&self) {
         eprintln!("{}", self)
     }

@@ -56,7 +56,7 @@ fn run(file: &str) {
     let mut scanner = Scanner::new(file);
     let tokens = scanner.scan_tokens();
 
-    // for token in tokens.iter() {
-    //     println!("{token}")
-    // }
+    for token in tokens.tokens.iter() {
+        println!("{token}")
+    }
 }
