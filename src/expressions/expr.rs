@@ -11,7 +11,7 @@ pub struct Binary<'a> {
     pub right: &'a dyn Expr,
 }
 
-impl<'a> Expr for Binary<'a> {
+impl Expr for Binary<'_> {
     fn accept(&self, visitor: &dyn ExprVisitor) -> String {
         visitor.visit_binary(self)
     }
@@ -21,7 +21,7 @@ pub struct Grouping<'a> {
     pub expression: &'a dyn Expr,
 }
 
-impl<'a> Expr for Grouping<'a> {
+impl Expr for Grouping<'_> {
     fn accept(&self, visitor: &dyn ExprVisitor) -> String {
         visitor.visit_grouping(self)
     }
@@ -31,7 +31,7 @@ pub struct Literal<'a> {
     pub value: LiteralValue<'a>,
 }
 
-impl<'a> Expr for Literal<'a> {
+impl Expr for Literal<'_> {
     fn accept(&self, visitor: &dyn ExprVisitor) -> String {
         visitor.visit_literal(self)
     }
@@ -42,7 +42,7 @@ pub struct Unary<'a> {
     pub expr: &'a dyn Expr,
 }
 
-impl<'a> Expr for Unary<'a> {
+impl Expr for Unary<'_> {
     fn accept(&self, visitor: &dyn ExprVisitor) -> String {
         visitor.visit_unary(self)
     }

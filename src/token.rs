@@ -1,5 +1,5 @@
 use crate::token_type::TokenType;
-use std::fmt::{Display, Formatter, Result};
+use core::fmt::{Display, Formatter, Result};
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum LiteralValue<'a> {
@@ -7,17 +7,16 @@ pub enum LiteralValue<'a> {
     Number(f64),
 }
 
-impl<'a> Display for LiteralValue<'a> {
-    fn fmt(&self, formatter: &mut Formatter) -> Result {
-        let value: &dyn Display = match self {
-            LiteralValue::String(value) => value,
-            LiteralValue::Number(value) => value,
-        };
-
-        write!(formatter, "{}", value)
+impl Display for LiteralValue<'_> {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        match *self {
+            LiteralValue::String(value) => write!(f, "{value}"),
+            LiteralValue::Number(value) => write!(f, "{value}"),
+        }
     }
 }
 
+#[allow(clippy::struct_field_names, reason = "Would otherwise be named type")]
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub struct Token<'a> {
     pub token_type: TokenType,
@@ -27,7 +26,7 @@ pub struct Token<'a> {
 }
 
 impl<'a> Token<'a> {
-    pub fn new(
+    pub const fn new(
         token_type: TokenType,
         lexeme: &'a str,
         literal: Option<LiteralValue<'a>>,
@@ -42,21 +41,14 @@ impl<'a> Token<'a> {
     }
 }
 
-impl<'a> Display for Token<'a> {
-    fn fmt(&self, formatter: &mut Formatter) -> Result {
+impl Display for Token<'_> {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         write!(
-            formatter,
+            f,
             "{}, {}{}",
             self.token_type,
             self.lexeme,
-            match &self.literal {
-                Some(lit) => {
-                    format!(", {}", lit)
-                }
-                None => {
-                    "".to_string()
-                }
-            }
+            self.literal.map_or(String::new(), |lit| format!(", {lit}"))
         )
     }
 }

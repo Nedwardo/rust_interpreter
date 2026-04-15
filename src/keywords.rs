@@ -1,6 +1,7 @@
 use crate::token_type::TokenType;
 use crate::token_type::TokenType::{
-    AND, CLASS, ELSE, FALSE, FOR, FUN, IF, NIL, OR, PRINT, RETURN, SUPER, THIS, TRUE, VAR, WHILE,
+    AND, CLASS, ELSE, FALSE, FOR, FUN, IF, NIL, OR, PRINT, RETURN, SUPER, THIS,
+    TRUE, VAR, WHILE,
 };
 
 pub fn get_keyword(keyword: &str) -> Option<TokenType> {

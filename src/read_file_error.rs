@@ -1,5 +1,5 @@
+use core::fmt::{Display, Formatter, Result};
 use std::error;
-use std::fmt::{Display, Formatter, Result};
 use std::io;
 use std::path::Path;
 
@@ -10,8 +10,8 @@ pub struct ReadFileError {
 }
 
 impl Display for ReadFileError {
-    fn fmt(&self, formatter: &mut Formatter) -> Result {
-        write!(formatter, "Unable to read file at {}", self.path.display())
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        write!(f, "Unable to read file at {}", self.path.display())
     }
 }
 

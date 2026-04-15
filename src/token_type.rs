@@ -1,8 +1,11 @@
-use std::fmt::{Display, Formatter, Result};
+use core::fmt::{Display, Formatter, Result};
 
-#[allow(non_camel_case_types)]
-#[allow(clippy::upper_case_acronyms)]
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[allow(
+    non_camel_case_types,
+    clippy::upper_case_acronyms,
+    reason = "Using the same names as from the book"
+)]
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum TokenType {
     // Single-character tokens.
     LEFT_PAREN,
@@ -50,23 +53,24 @@ pub enum TokenType {
     VAR,
     WHILE,
 
+    COMMENT,
     EOF,
 }
 
 impl Display for TokenType {
-    fn fmt(&self, formatter: &mut Formatter) -> Result {
-        let output = match self {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        let output = match *self {
             Self::LEFT_PAREN => "(",
             Self::RIGHT_PAREN => ")",
             Self::LEFT_BRACE => "{",
             Self::RIGHT_BRACE => "}",
-            Self::COMMA => "(",
-            Self::DOT => ")",
-            Self::MINUS => "{",
-            Self::PLUS => "}",
-            Self::SEMICOLON => "(",
-            Self::SLASH => ")",
-            Self::STAR => "{",
+            Self::COMMA => ",",
+            Self::DOT => ".",
+            Self::MINUS => "-",
+            Self::PLUS => "+",
+            Self::SEMICOLON => ";",
+            Self::SLASH => "/",
+            Self::STAR => "*",
 
             Self::BANG => "!",
             Self::BANG_EQUAL => "!=",
@@ -98,8 +102,9 @@ impl Display for TokenType {
             Self::VAR => "var",
             Self::WHILE => "while",
 
+            Self::COMMENT => "//...",
             Self::EOF => "\\0",
         };
-        write!(formatter, "{}", output)
+        write!(f, "{output}")
     }
 }

@@ -1,11 +1,15 @@
 use super::expr::{Binary, Expr, Grouping, Literal, Unary};
 use super::expr_visitor::ExprVisitor;
 
-pub struct RpnPrinter {}
+pub struct RpnPrinter;
 
 impl ExprVisitor for RpnPrinter {
     fn visit_binary(&self, binary: &Binary) -> String {
-        self.parenthesize(binary.operator.lexeme, binary.left, Some(binary.right))
+        self.parenthesize(
+            binary.operator.lexeme,
+            binary.left,
+            Some(binary.right),
+        )
     }
     fn visit_grouping(&self, grouping: &Grouping) -> String {
         self.parenthesize("group", grouping.expression, None)
@@ -23,7 +27,12 @@ impl ExprVisitor for RpnPrinter {
 }
 
 impl RpnPrinter {
-    fn parenthesize(&self, name: &str, lhs: &dyn Expr, rhs: Option<&dyn Expr>) -> String {
+    fn parenthesize(
+        &self,
+        name: &str,
+        lhs: &dyn Expr,
+        rhs: Option<&dyn Expr>,
+    ) -> String {
         let mut output = String::with_capacity(2 * 3);
 
         output += &lhs.accept(self);
@@ -37,7 +46,7 @@ impl RpnPrinter {
         output
     }
 
-    fn print(&self, expr: impl Expr) -> String {
+    fn print(&self, expr: &impl Expr) -> String {
         expr.accept(self)
     }
 }
@@ -49,7 +58,7 @@ mod tests {
     use crate::token::Token;
     use crate::token_type::TokenType::{MINUS, PLUS, STAR};
     #[test]
-    fn test_expression() {
+    fn expression() {
         let expression = Binary {
             operator: Token {
                 token_type: STAR,
@@ -79,8 +88,8 @@ mod tests {
             },
         };
 
-        let expression = RpnPrinter {}.print(expression);
-        println!("{}", expression);
-        assert!(expression == "1 2 + 4 3 - *");
+        let output = RpnPrinter {}.print(&expression);
+        println!("{output}");
+        assert!(output == "1 2 + 4 3 - *");
     }
 }

@@ -1,11 +1,15 @@
 use super::expr::{Binary, Expr, Grouping, Literal, Unary};
 use super::expr_visitor::ExprVisitor;
 
-pub struct AstPrinter {}
+pub struct AstPrinter;
 
 impl ExprVisitor for AstPrinter {
     fn visit_binary(&self, binary: &Binary) -> String {
-        self.parenthesize(binary.operator.lexeme, binary.left, Some(binary.right))
+        self.parenthesize(
+            binary.operator.lexeme,
+            binary.left,
+            Some(binary.right),
+        )
     }
     fn visit_grouping(&self, grouping: &Grouping) -> String {
         self.parenthesize("group", grouping.expression, None)
@@ -23,7 +27,12 @@ impl ExprVisitor for AstPrinter {
 }
 
 impl AstPrinter {
-    fn parenthesize(&self, name: &str, lhs: &dyn Expr, rhs: Option<&dyn Expr>) -> String {
+    fn parenthesize(
+        &self,
+        name: &str,
+        lhs: &dyn Expr,
+        rhs: Option<&dyn Expr>,
+    ) -> String {
         let mut output = String::with_capacity(2 * 3);
 
         output += "(";
@@ -39,7 +48,7 @@ impl AstPrinter {
         output
     }
 
-    fn print(&self, expr: impl Expr) -> String {
+    fn print(&self, expr: &impl Expr) -> String {
         expr.accept(self)
     }
 }
@@ -51,7 +60,7 @@ mod tests {
     use crate::token::Token;
     use crate::token_type::TokenType::{MINUS, STAR};
     #[test]
-    fn test_expression() {
+    fn expression() {
         let expression = Binary {
             left: &Unary {
                 operator: Token {
@@ -77,6 +86,8 @@ mod tests {
             },
         };
 
-        assert!(AstPrinter {}.print(expression) == "(* (- 123) (group 45.67))");
+        assert!(
+            AstPrinter {}.print(&expression) == "(* (- 123) (group 45.67))"
+        );
     }
 }

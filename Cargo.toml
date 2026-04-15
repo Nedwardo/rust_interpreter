@@ -3,4 +3,41 @@ name = "interpreter"
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+unwrap_used = "warn"
+panic = "warn"
+mem_forget = "warn"
+exit = "warn"
+lossy_float_literal = "warn"
+rc_buffer = "warn"
+rc_mutex = "warn"
+mutex_atomic = "warn"
+empty_drop = "warn"
+verbose_file_reads = "warn"
+create_dir = "warn"
+assertions_on_result_states = "warn"
+unused_result_ok = "warn"
+
+print_stderr = "warn"
+use_debug = "warn"
+str_to_string = "warn"
+string_add = "warn"
+get_unwrap = "warn"
+map_err_ignore = "warn"
+clone_on_ref_ptr = "warn"
+let_underscore_must_use = "warn"
+fn_to_numeric_cast_any = "warn"
+empty_structs_with_brackets = "warn"
+empty_enum_variants_with_brackets = "warn"
+needless_raw_strings = "warn"
+infinite_loop = "warn"
+pathbuf_init_then_push = "warn"
+non_zero_suggestions = "warn"
+

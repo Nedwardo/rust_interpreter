@@ -3,10 +3,10 @@ use crate::keywords::get_keyword;
 use crate::token::{LiteralValue, Token};
 use crate::token_type::TokenType;
 use crate::token_type::TokenType as TT;
-use crate::tokenizer::Tokenizer;
+use core::str::Chars;
 
 pub struct Scanner<'a> {
-    iter: Tokenizer<'a>,
+    iter: Cursor<'a>,
 }
 
 pub struct ScanResult<'a> {
@@ -14,10 +14,21 @@ pub struct ScanResult<'a> {
     pub errors: Vec<InterpreterError<'a>>,
 }
 
+pub struct Cursor<'a> {
+    source: &'a str,
+    location: Location,
+}
+
+#[derive(Clone, Copy)]
+pub struct Location {
+    pub index: usize,
+    pub line: usize,
+}
+
 impl<'a> Scanner<'a> {
-    pub fn new(source: &'a str) -> Scanner<'a> {
+    pub fn new(source: &'a str) -> Self {
         Scanner {
-            iter: Tokenizer::new(source),
+            iter: Cursor::new(source),
         }
     }
 
@@ -26,12 +37,6 @@ impl<'a> Scanner<'a> {
         let mut errors = Vec::new();
         while let Some(character) = self.iter.first() {
             let result = self.scan_token(character);
-            println!(
-                "Finsihed scanning, Index is now at {:?}, and line is {:?}, next char is {:?}\n",
-                self.iter.location.index,
-                self.iter.location.line,
-                self.iter.first()
-            );
             match result {
                 Ok(Some(token)) => tokens.push(token),
                 Ok(None) => {}
@@ -42,11 +47,10 @@ impl<'a> Scanner<'a> {
         ScanResult { tokens, errors }
     }
 
-    fn scan_token(&mut self, character: char) -> Result<Option<Token<'a>>, InterpreterError<'a>> {
-        println!(
-            "Scanning starting on token {:?}, with index {:?}, and line {:?}",
-            character, self.iter.location.index, self.iter.location.line
-        );
+    fn scan_token(
+        &mut self,
+        character: char,
+    ) -> Result<Option<Token<'a>>, InterpreterError<'a>> {
         let token = match character {
             '(' => self.build_single_char_token(TT::LEFT_PAREN),
             ')' => self.build_single_char_token(TT::RIGHT_PAREN),
@@ -64,10 +68,7 @@ impl<'a> Scanner<'a> {
             '<' => self.build_compound('=', TT::LESS_EQUAL, TT::LESS),
             '>' => self.build_compound('=', TT::GREATER_EQUAL, TT::GREATER),
 
-            '/' if self.iter.second() == Some('/') => {
-                self.iter.skip_past_char('\n');
-                return Ok(None);
-            }
+            '/' if self.iter.second() == Some('/') => self.build_comment(),
             '/' => self.build_single_char_token(TT::SLASH),
             ' ' | '\r' | '\t' | '\n' => {
                 self.iter.pop();
@@ -85,7 +86,11 @@ impl<'a> Scanner<'a> {
         self.build_sized_token(token_type, 1)
     }
 
-    fn build_sized_token(&mut self, token_type: TokenType, size: usize) -> Token<'a> {
+    fn build_sized_token(
+        &mut self,
+        token_type: TokenType,
+        size: usize,
+    ) -> Token<'a> {
         let lexeme = self.iter.consume_chars(size);
         Token::new(token_type, lexeme, None, self.iter.line())
     }
@@ -114,6 +119,11 @@ impl<'a> Scanner<'a> {
             });
         }
 
+        debug_assert!(
+            lexeme.is_char_boundary(1)
+                && lexeme.is_char_boundary(lexeme.len() - 1),
+            r#"The first and last chars are '"'"#
+        );
         let value = LiteralValue::String(&lexeme[1..lexeme.len() - 1]);
         Ok(Token::new(TT::STRING, lexeme, Some(value), line))
     }
@@ -123,7 +133,7 @@ impl<'a> Scanner<'a> {
         let value = LiteralValue::Number(
             lexeme
                 .parse::<f64>()
-                .expect("Tokenizer guarantees valid float syntax"),
+                .expect("Consume number guarantees valid float syntax"),
         );
         Token::new(TT::NUMBER, lexeme, Some(value), self.iter.line())
     }
@@ -142,9 +152,74 @@ impl<'a> Scanner<'a> {
             error_location: Some(character),
         }
     }
+
+    fn build_comment(&mut self) -> Token<'a> {
+        let lexeme = self.iter.consume_comment();
+        Token::new(TT::COMMENT, lexeme, None, self.iter.line())
+    }
 }
 
-impl<'a> Tokenizer<'a> {
+impl<'a> Cursor<'a> {
+    fn new(source: &'a str) -> Self {
+        Self {
+            source,
+            location: Location::default(),
+        }
+    }
+
+    const fn line(&self) -> usize {
+        self.location.line
+    }
+
+    fn remaining(&self) -> &'a str {
+        debug_assert!(self.source.is_char_boundary(self.location.index));
+        &self.source[self.location.index..]
+    }
+
+    fn chars(&self) -> Chars<'a> {
+        self.remaining().chars()
+    }
+
+    fn first(&self) -> Option<char> {
+        self.chars().next()
+    }
+
+    fn second(&self) -> Option<char> {
+        self.chars().nth(1)
+    }
+
+    fn slice_from(&self, location: Location) -> &'a str {
+        debug_assert!(self.source.is_char_boundary(location.index));
+        &self.source[location.index..self.location.index]
+    }
+
+    fn consume_chars(&mut self, n: usize) -> &'a str {
+        let start = self.location;
+        for character in self.remaining().chars().take(n) {
+            self.location.bump(character);
+        }
+        self.slice_from(start)
+    }
+
+    fn pop(&mut self) -> Option<char> {
+        let result = self.first();
+        if let Some(character) = result {
+            self.location.bump(character);
+        }
+        result
+    }
+
+    fn advance_while(&mut self, predicate: impl Fn(char) -> bool) {
+        let peek_iter = self.chars();
+
+        for character in peek_iter {
+            if !predicate(character) {
+                break;
+            }
+            self.location.bump(character);
+        }
+    }
+
     fn consume_string(&mut self) -> (&'a str, bool) {
         let start = self.location;
 
@@ -152,15 +227,9 @@ impl<'a> Tokenizer<'a> {
         debug_assert_eq!(first, Some('"'));
 
         self.advance_while(|c| c != '"');
-        let last = self.pop();
+        let terminated_by_quote = self.pop().is_some();
 
-        if last.is_some() {
-            debug_assert_eq!(last, Some('"'));
-        } else {
-            println!("Unterminated string")
-        }
-
-        (self.slice_from(start), last.is_some())
+        (self.slice_from(start), terminated_by_quote)
     }
 
     fn consume_number(&mut self) -> &'a str {
@@ -168,7 +237,9 @@ impl<'a> Tokenizer<'a> {
 
         self.advance_while(|c| c.is_ascii_digit());
 
-        if self.first() == Some('.') && self.second().is_some_and(|c| c.is_ascii_digit()) {
+        if self.first() == Some('.')
+            && self.second().is_some_and(|c| c.is_ascii_digit())
+        {
             self.pop();
             self.advance_while(|c| c.is_ascii_digit());
         }
@@ -180,12 +251,190 @@ impl<'a> Tokenizer<'a> {
         self.advance_while(|c| c.is_ascii_alphanumeric() || c == '_');
         self.slice_from(start)
     }
+
+    fn consume_comment(&mut self) -> &'a str {
+        let start = self.location;
+        self.advance_while(|c| c != '\n');
+        self.slice_from(start)
+    }
+}
+
+impl Default for Location {
+    fn default() -> Self {
+        Self { index: 0, line: 1 }
+    }
+}
+
+impl Location {
+    pub const fn bump(&mut self, character: char) {
+        self.index += character.len_utf8();
+
+        if character == '\n' {
+            self.line += 1;
+        }
+    }
 }
 
 #[cfg(test)]
-mod tests {
+mod cursor_tests {
     use super::*;
+    #[test]
+    fn peek() {
+        let tokenizer = Cursor::new("test");
 
+        assert_eq!(tokenizer.first(), Some('t'));
+        assert_eq!(tokenizer.second(), Some('e'));
+    }
+
+    #[test]
+    fn pop() {
+        let mut tokenizer = Cursor::new("test");
+
+        assert_eq!(tokenizer.pop(), Some('t'));
+        assert_eq!(tokenizer.pop(), Some('e'));
+        assert_eq!(tokenizer.pop(), Some('s'));
+        assert_eq!(tokenizer.pop(), Some('t'));
+        assert_eq!(tokenizer.pop(), None);
+    }
+
+    #[test]
+    fn consume() {
+        let mut tokenizer = Cursor::new("test");
+
+        assert_eq!(tokenizer.consume_chars(3), "tes");
+        assert!(
+            tokenizer.location.index == "tes".chars().map(char::len_utf8).sum()
+        );
+
+        assert_eq!(tokenizer.first(), Some('t'));
+        assert_eq!(tokenizer.second(), None);
+
+        assert_eq!(tokenizer.consume_chars(5), "t");
+    }
+
+    #[test]
+    fn consume_chars() {
+        let mut tokenizer = Cursor::new("test");
+        assert_eq!(tokenizer.consume_chars(3), "tes");
+        assert_eq!(tokenizer.first(), Some('t'));
+
+        tokenizer = Cursor::new("testy");
+        let _: &str = tokenizer.consume_chars(2);
+        let _: &str = tokenizer.consume_chars(2);
+        assert_eq!(tokenizer.first(), Some('y'));
+        assert_eq!(tokenizer.second(), None);
+    }
+
+    #[test]
+    fn empty_source() {
+        let mut tokenizer = Cursor::new("");
+        assert_eq!(tokenizer.first(), None);
+        assert_eq!(tokenizer.second(), None);
+        assert_eq!(tokenizer.pop(), None);
+        assert_eq!(tokenizer.consume_chars(5), "");
+        assert_eq!(tokenizer.line(), 1);
+    }
+
+    #[test]
+    fn consume_zero_chars_is_noop() {
+        let mut tokenizer = Cursor::new("abc");
+        assert_eq!(tokenizer.consume_chars(0), "");
+        assert_eq!(tokenizer.first(), Some('a'));
+        assert_eq!(tokenizer.location.index, 0);
+    }
+
+    #[test]
+    fn line_starts_at_one_and_increments_on_newline() {
+        let mut tokenizer = Cursor::new("a\nb\n\nc");
+        assert_eq!(tokenizer.line(), 1);
+        assert_eq!(tokenizer.pop(), Some('a'));
+        assert_eq!(tokenizer.line(), 1);
+        assert_eq!(tokenizer.pop(), Some('\n'));
+        assert_eq!(tokenizer.line(), 2);
+        assert_eq!(tokenizer.pop(), Some('b'));
+        assert_eq!(tokenizer.pop(), Some('\n'));
+        assert_eq!(tokenizer.pop(), Some('\n'));
+        assert_eq!(tokenizer.line(), 4);
+    }
+
+    #[test]
+    fn advance_while_stops_at_predicate() {
+        let mut tokenizer = Cursor::new("12345abc");
+        tokenizer.advance_while(|c| c.is_ascii_digit());
+        assert_eq!(tokenizer.first(), Some('a'));
+        assert_eq!(tokenizer.location.index, 5);
+    }
+
+    #[test]
+    fn advance_while_handles_eof() {
+        let mut tokenizer = Cursor::new("12345");
+        tokenizer.advance_while(|c| c.is_ascii_digit());
+        assert_eq!(tokenizer.first(), None);
+    }
+
+    #[test]
+    fn advance_while_empty_match_is_noop() {
+        let mut tokenizer = Cursor::new("abc");
+        tokenizer.advance_while(|c| c.is_ascii_digit());
+        assert_eq!(tokenizer.first(), Some('a'));
+        assert_eq!(tokenizer.location.index, 0);
+    }
+
+    #[test]
+    fn slice_from_returns_span_between_locations() {
+        let mut tokenizer = Cursor::new("foobar");
+        let start = tokenizer.location;
+        tokenizer.consume_chars(3);
+        assert_eq!(tokenizer.slice_from(start), "foo");
+    }
+
+    #[test]
+    fn remaining_reflects_cursor() {
+        let mut tokenizer = Cursor::new("foobar");
+        assert_eq!(tokenizer.remaining(), "foobar");
+        tokenizer.consume_chars(3);
+        assert_eq!(tokenizer.remaining(), "bar");
+        tokenizer.consume_chars(10);
+        assert_eq!(tokenizer.remaining(), "");
+    }
+
+    #[test]
+    fn handles_multibyte_utf8() {
+        let mut tokenizer = Cursor::new("é🦀z");
+        assert_eq!(tokenizer.first(), Some('é'));
+        assert_eq!(tokenizer.pop(), Some('é'));
+        assert_eq!(tokenizer.location.index, 2);
+        assert_eq!(tokenizer.pop(), Some('🦀'));
+        assert_eq!(tokenizer.location.index, 6);
+        assert_eq!(tokenizer.pop(), Some('z'));
+        assert_eq!(tokenizer.pop(), None);
+    }
+
+    #[test]
+    fn consume_chars_with_multibyte() {
+        let mut tokenizer = Cursor::new("é🦀z");
+        assert_eq!(tokenizer.consume_chars(2), "é🦀");
+        assert_eq!(tokenizer.first(), Some('z'));
+    }
+
+    #[test]
+    fn advance_while_counts_newlines() {
+        let mut tokenizer = Cursor::new("\n\n\nx");
+        tokenizer.advance_while(|c| c == '\n');
+        assert_eq!(tokenizer.line(), 4);
+        assert_eq!(tokenizer.first(), Some('x'));
+    }
+}
+
+#[allow(
+    clippy::indexing_slicing,
+    clippy::min_ident_chars,
+    clippy::unwrap_used,
+    reason = "tests"
+)]
+#[cfg(test)]
+mod tokenizer_tests {
+    use super::*;
     #[test]
     fn empty_input_yields_only_eof() {
         let result = Scanner::new("").scan_tokens();
@@ -236,7 +485,7 @@ mod tests {
             TT::EOF,
         ];
 
-        assert_eq!(types, expected_types)
+        assert_eq!(types, expected_types);
     }
 
     #[test]
@@ -244,17 +493,18 @@ mod tests {
         let tokens = Scanner::new("a / b").scan_tokens().tokens;
         let types: Vec<_> = tokens.into_iter().map(|t| t.token_type).collect();
 
-        let expected_types = vec![TT::IDENTIFIER, TT::SLASH, TT::IDENTIFIER, TT::EOF];
+        let expected_types =
+            vec![TT::IDENTIFIER, TT::SLASH, TT::IDENTIFIER, TT::EOF];
 
         assert_eq!(types, expected_types);
     }
 
     #[test]
-    fn line_comment_consumes_to_newline() {
+    fn comment_consumes_to_newline() {
         let tokens = Scanner::new("// this is ignored\n+").scan_tokens().tokens;
         let types: Vec<_> = tokens.into_iter().map(|t| t.token_type).collect();
 
-        let expected_types = vec![TT::PLUS, TT::EOF];
+        let expected_types = vec![TT::COMMENT, TT::PLUS, TT::EOF];
 
         assert_eq!(types, expected_types);
     }
@@ -268,7 +518,7 @@ mod tests {
         let expected_types = vec![TT::PLUS, TT::MINUS, TT::EOF];
         let expected_lines = vec![2, 4, 4];
         assert_eq!(types, expected_types);
-        assert_eq!(lines, expected_lines)
+        assert_eq!(lines, expected_lines);
     }
 
     #[test]
@@ -343,22 +593,22 @@ mod tests {
     }
 
     #[test]
-    fn test_number() {
-        let tokens = Scanner::new("123").scan_tokens().tokens;
-        let token = tokens[0];
+    fn scan_number() {
+        let mut tokens = Scanner::new("123").scan_tokens().tokens;
+        let mut token = tokens[0];
 
         let expected_token_type = TT::NUMBER;
-        let expected_token_literal = LiteralValue::Number(123.0);
+        let mut expected_token_literal = LiteralValue::Number(123.0);
 
         assert_eq!(tokens.len(), 2);
         assert_eq!(token.token_type, expected_token_type);
         assert_eq!(token.literal, Some(expected_token_literal));
         assert_eq!(tokens[1].token_type, TT::EOF);
 
-        let tokens = Scanner::new("3.15").scan_tokens().tokens;
-        let token = tokens[0];
+        tokens = Scanner::new("3.15").scan_tokens().tokens;
+        token = tokens[0];
 
-        let expected_token_literal = LiteralValue::Number(3.15);
+        expected_token_literal = LiteralValue::Number(3.15);
 
         assert_eq!(tokens.len(), 2);
         assert_eq!(token.token_type, expected_token_type);
@@ -399,17 +649,14 @@ mod tests {
     #[test]
     fn identifier_with_underscore_and_digits() {
         let tokens = Scanner::new("_foo bar123 _").scan_tokens().tokens;
+        let types: Vec<_> = tokens.iter().map(|t| t.token_type).collect();
 
-        let expected_identifier = TT::IDENTIFIER;
+        let expected_types =
+            vec![TT::IDENTIFIER, TT::IDENTIFIER, TT::IDENTIFIER, TT::EOF];
 
         assert_eq!(tokens.len(), 4);
 
-        assert!(
-            tokens
-                .iter()
-                .take(3)
-                .all(|t| t.token_type == expected_identifier)
-        );
+        assert_eq!(types, expected_types);
         assert_eq!(tokens[0].lexeme, "_foo");
         assert_eq!(tokens[1].lexeme, "bar123");
         assert_eq!(tokens[2].lexeme, "_");
@@ -419,16 +666,28 @@ mod tests {
     #[test]
     fn identifier_cannot_start_with_digit() {
         let result = Scanner::new("123abc").scan_tokens();
-        let types: Vec<_> = result.tokens.into_iter().map(|t| t.token_type).collect();
+        let types: Vec<_> =
+            result.tokens.into_iter().map(|t| t.token_type).collect();
 
         let expected_types = vec![TT::NUMBER, TT::IDENTIFIER, TT::EOF];
         assert_eq!(types, expected_types);
     }
 
     #[test]
+    fn comment_skips_until_eol() {
+        let result = Scanner::new("123//some words if\n+").scan_tokens();
+        let types: Vec<_> =
+            result.tokens.into_iter().map(|t| t.token_type).collect();
+
+        let expected_types = vec![TT::NUMBER, TT::COMMENT, TT::PLUS, TT::EOF];
+        assert_eq!(types, expected_types);
+    }
+
+    #[test]
     fn unexpected_char_produces_error_and_continues() {
         let result = Scanner::new("@+@").scan_tokens();
-        let types: Vec<_> = result.tokens.into_iter().map(|t| t.token_type).collect();
+        let types: Vec<_> =
+            result.tokens.into_iter().map(|t| t.token_type).collect();
         let errors = &result.errors;
 
         let expected_types = vec![TT::PLUS, TT::EOF];
@@ -436,7 +695,7 @@ mod tests {
 
         let expected_error_message = "Unexpected character";
         assert_eq!(result.errors.len(), 2);
-        assert!(errors.iter().all(|e| e.message == expected_error_message))
+        assert!(errors.iter().all(|e| e.message == expected_error_message));
     }
 
     #[test]
@@ -444,8 +703,7 @@ mod tests {
         for src in ["", " ", "@", "//x", "\"unterminated"] {
             let tokens = Scanner::new(src).scan_tokens().tokens;
 
-            assert_eq!(tokens.len(), 1);
-            assert_eq!(tokens[0].token_type, TT::EOF);
+            assert_eq!(tokens.iter().last().unwrap().token_type, TT::EOF);
         }
     }
 }

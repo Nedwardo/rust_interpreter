@@ -6,17 +6,17 @@ mod read_file_error;
 mod scanner;
 mod token;
 mod token_type;
-mod tokenizer;
 use read_file_error::ReadFileError;
 use scanner::Scanner;
 use std::env::args;
+use std::error;
 use std::fs::read_to_string;
-use std::io::{Write, stdin, stdout};
+use std::io::{Write as _, stdin, stdout};
 use std::path::Path;
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn error::Error>> {
     let args: Vec<String> = args().collect();
 
-    match &args[..] {
+    match args.as_slice() {
         [_] => run_prompt(),
         [_, file] => run_file(file)?,
         _ => {
@@ -28,10 +28,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_file(script_address: &str) -> Result<(), ReadFileError> {
     let script_path = Path::new(script_address);
-    let file_contents = read_to_string(script_path).map_err(|e| ReadFileError {
-        path: script_path.into(),
-        source: e,
-    })?;
+    let file_contents =
+        read_to_string(script_path).map_err(|e| ReadFileError {
+            path: script_path.into(),
+            source: e,
+        })?;
     run(&file_contents);
     Ok(())
 }
@@ -56,7 +57,7 @@ fn run(file: &str) {
     let mut scanner = Scanner::new(file);
     let tokens = scanner.scan_tokens();
 
-    for token in tokens.tokens.iter() {
-        println!("{token}")
+    for token in &tokens.tokens {
+        println!("{token}");
     }
 }

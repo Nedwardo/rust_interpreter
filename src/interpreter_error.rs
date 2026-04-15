@@ -1,5 +1,5 @@
+use core::fmt::{Display, Formatter, Result};
 use std::error;
-use std::fmt::{Display, Formatter, Result};
 
 #[derive(Debug)]
 pub struct InterpreterError<'a> {
@@ -8,32 +8,32 @@ pub struct InterpreterError<'a> {
     pub error_location: Option<&'a str>,
 }
 
-impl<'a> Display for InterpreterError<'a> {
-    fn fmt(&self, formatter: &mut Formatter) -> Result {
+impl Display for InterpreterError<'_> {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         match self.error_location {
             Some(error_location) => {
                 write!(
-                    formatter,
+                    f,
                     "[line {}] io::Error {}: {}",
                     self.line, error_location, self.message
                 )
             }
             None => {
-                write!(formatter, "[line {}] io:Error: {}", self.line, self.message)
+                write!(f, "[line {}] io:Error: {}", self.line, self.message)
             }
         }
     }
 }
 
-impl<'a> error::Error for InterpreterError<'a> {
+impl error::Error for InterpreterError<'_> {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         None
     }
 }
 
-impl<'a> InterpreterError<'a> {
+impl InterpreterError<'_> {
     fn report(&self) {
-        eprintln!("{}", self)
+        eprintln!("{self}");
     }
 }
 pub fn error(line: u32, message: &str) {
