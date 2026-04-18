@@ -1,24 +1,38 @@
 use super::expr_visitor::ExprVisitor;
 use crate::token::LiteralValue;
-use crate::token::Token;
+use crate::token_type::TokenType;
 pub trait Expr {
     fn accept(&self, visitor: &dyn ExprVisitor) -> String;
 }
 
 pub struct Binary<'a> {
-    pub left: &'a dyn Expr,
-    pub operator: Token<'a>,
-    pub right: &'a dyn Expr,
+    pub left: Box<dyn Expr + 'a>,
+    pub operator: TokenType,
+    pub right: Box<dyn Expr + 'a>,
 }
 
 impl Expr for Binary<'_> {
-    fn accept(&self, visitor: &dyn ExprVisitor) -> String {
+    fn accept<'b>(&self, visitor: &dyn ExprVisitor) -> String {
         visitor.visit_binary(self)
     }
 }
 
+impl<'a> Binary<'a> {
+    pub fn new(
+        left: Box<dyn Expr + 'a>,
+        operator: TokenType,
+        right: Box<dyn Expr + 'a>,
+    ) -> Self {
+        Self {
+            left,
+            operator,
+            right,
+        }
+    }
+}
+
 pub struct Grouping<'a> {
-    pub expression: &'a dyn Expr,
+    pub expression: Box<dyn Expr + 'a>,
 }
 
 impl Expr for Grouping<'_> {
@@ -38,8 +52,8 @@ impl Expr for Literal<'_> {
 }
 
 pub struct Unary<'a> {
-    pub operator: Token<'a>,
-    pub expr: &'a dyn Expr,
+    pub operator: TokenType,
+    pub expr: Box<dyn Expr + 'a>,
 }
 
 impl Expr for Unary<'_> {

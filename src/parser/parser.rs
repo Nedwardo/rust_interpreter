@@ -1,59 +1,144 @@
-use crate::expressions::expr::{Binary, Expr};
-use crate::token::Token;
-use crate::token_type::TokenType;
-use crate::token_type::TokenType::{BANG_EQUAL, EQUAL_EQUAL};
-use std::vec;
+use super::parser_error::ParserError;
+use super::parser_error::ParserError::{
+    FailedToGenerateChildExpr, UnexpectedToken,
+};
+use crate::expressions::expr::{Binary, Expr, Literal, Unary};
+use crate::token::{LiteralValue, Token, TokenKind};
+use crate::token_type::TokenType as TT;
+use std::iter::Peekable;
+use std::vec::IntoIter;
 use std::vec::Vec;
 
-pub struct Parser<'parser_lt, 'token_lt> {
-    tokens: Vec<Token<'token_lt>>,
-    current: usize,
+pub struct Parser<'a> {
+    tokens: Peekable<IntoIter<Token<'a>>>,
 }
 
-pub fn build_parser<'token_lt, 'parser_lt>(
-    tokens: Vec<Token<'token_lt>>,
-) -> Parser<'parser_lt, 'token_lt>
-where
-    'token_lt: 'parser_lt,
-{
-    Parser { tokens, current: 0 }
-}
-
-impl<'parser_lt, 'token_lt> Parser<'parser_lt, 'token_lt> {
-    pub fn expression(&self) -> &dyn Expr {
-        return self.equality();
-    }
-
-    pub fn equality(&self) -> &dyn Expr {
-        let expr = self.comparison();
-
-        while self.match_token(vec![BANG_EQUAL, EQUAL_EQUAL]) {
-            let operator = self.previous();
-            let right = self.comparison();
-            let expr = Binary {
-                expr,
-                operator,
-                right,
-            };
+impl<'a> Parser<'a> {
+    pub fn new(tokens: Vec<Token<'a>>) -> Self {
+        Parser {
+            tokens: tokens.into_iter().peekable(),
         }
-
-        expr
     }
 
-    fn match_token(&self, token_types: Vec<TokenType>) -> bool {
-        for token_type in token_types.iter() {
-            if self.check(token_type) {
-                self.advance();
-                return true;
+    fn next_if_match(&mut self, token_types: &[TT]) -> Option<Token<'a>> {
+        if self
+            .tokens
+            .peek()
+            .map_or(false, |t| token_types.iter().any(|tt| &t.token_kind == tt))
+        {
+            self.tokens.next()
+        } else {
+            None
+        }
+    }
+
+    fn next_token_type_if(&mut self, token_types: &'static [TT]) -> Option<TT> {
+        if let Some(token) = self.tokens.peek() {
+            for tt in token_types {
+                if token.token_kind == *tt {
+                    self.tokens.next();
+                    return Some(*tt);
+                }
             }
         }
-        false
+        None
     }
 
-    fn check(&self, token_type: &TokenType) -> bool {
-        if self.isAtEnd() {
-            return false;
+    fn next_literal(
+        &mut self,
+        literal_types: &'static [TT],
+    ) -> Result<LiteralValue<'a>, Option<Token<'a>>> {
+        let token = self.tokens.next().ok_or(None)?;
+
+        match token.token_kind {
+            TokenKind::Value { literal_value }
+                if literal_types.iter().any(|lt| literal_value == *lt) =>
+            {
+                Ok(literal_value)
+            }
+            _ => Err(Some(token)),
         }
-        self.peek().token_type == token_type
+    }
+
+    pub fn expression(
+        &mut self,
+    ) -> Result<Box<dyn Expr + 'a>, ParserError<'a>> {
+        self.equality()
+    }
+
+    pub fn equality(&mut self) -> Result<Box<dyn Expr + 'a>, ParserError<'a>> {
+        let mut expr = self.comparison()?;
+
+        static OPERATORS: [TT; 2] = [TT::BANG_EQUAL, TT::EQUAL_EQUAL];
+
+        while let Some(operator) = self.next_token_type_if(&OPERATORS) {
+            let rhs = self.comparison()?;
+            expr = Box::new(Binary::new(expr, operator, rhs));
+        }
+        Ok(expr)
+    }
+
+    pub fn comparison(
+        &mut self,
+    ) -> Result<Box<dyn Expr + 'a>, ParserError<'a>> {
+        let mut expr = self.term()?;
+
+        static OPERATORS: [TT; 4] =
+            [TT::GREATER, TT::GREATER_EQUAL, TT::LESS, TT::LESS_EQUAL];
+
+        while let Some(operator) = self.next_token_type_if(&OPERATORS) {
+            let rhs = self.term()?;
+            expr = Box::new(Binary::new(expr, operator, rhs));
+        }
+        Ok(expr)
+    }
+
+    pub fn term(&mut self) -> Result<Box<dyn Expr + 'a>, ParserError<'a>> {
+        let mut expr = self.factor()?;
+
+        static OPERATORS: [TT; 2] = [TT::MINUS, TT::PLUS];
+
+        while let Some(operator) = self.next_token_type_if(&OPERATORS) {
+            let rhs = self.factor()?;
+            expr = Box::new(Binary::new(expr, operator, rhs));
+        }
+        Ok(expr)
+    }
+
+    pub fn factor(&mut self) -> Result<Box<dyn Expr + 'a>, ParserError<'a>> {
+        let mut expr = self.unary()?;
+
+        static OPERATORS: [TT; 2] = [TT::SLASH, TT::STAR];
+
+        while let Some(operator) = self.next_token_type_if(&OPERATORS) {
+            let rhs = self.unary()?;
+            expr = Box::new(Binary::new(expr, operator, rhs));
+        }
+        Ok(expr)
+    }
+
+    pub fn unary(&mut self) -> Result<Box<dyn Expr + 'a>, ParserError<'a>> {
+        static OPERATORS: [TT; 2] = [TT::BANG, TT::MINUS];
+
+        if let Some(operator) = self.next_token_type_if(&OPERATORS) {
+            let value = self.unary()?;
+            Ok(Box::new(Unary {
+                operator,
+                expr: value,
+            }))
+        } else {
+            self.primary()
+        }
+    }
+
+    pub fn primary(&mut self) -> Result<Box<dyn Expr + 'a>, ParserError<'a>> {
+        static SIMPLE_LITERALS: [TT; 3] = [TT::FALSE, TT::TRUE, TT::NIL];
+        match self.next_literal(&SIMPLE_LITERALS) {
+            Ok(literal) => Ok(Box::new(Literal { value: literal })),
+            Err(token) => Err(UnexpectedToken {
+                token,
+                expected_token_types: &SIMPLE_LITERALS,
+            }),
+        }
     }
 }

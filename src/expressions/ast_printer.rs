@@ -4,15 +4,15 @@ use super::expr_visitor::ExprVisitor;
 pub struct AstPrinter;
 
 impl ExprVisitor for AstPrinter {
-    fn visit_binary(&self, binary: &Binary) -> String {
+    fn visit_binary(&self, binary: &Binary<'_>) -> String {
         self.parenthesize(
-            binary.operator.lexeme,
-            binary.left,
-            Some(binary.right),
+            &binary.operator.to_string(),
+            &binary.left,
+            Some(&binary.right),
         )
     }
-    fn visit_grouping(&self, grouping: &Grouping) -> String {
-        self.parenthesize("group", grouping.expression, None)
+    fn visit_grouping(&self, grouping: &Grouping<'_>) -> String {
+        self.parenthesize("group", &grouping.expression, None)
     }
     fn visit_literal(&self, literal: &Literal) -> String {
         // match literal.value {
@@ -21,8 +21,8 @@ impl ExprVisitor for AstPrinter {
         // }
         literal.value.to_string()
     }
-    fn visit_unary(&self, unary: &Unary) -> String {
-        self.parenthesize(unary.operator.lexeme, unary.expr, None)
+    fn visit_unary(&self, unary: &Unary<'_>) -> String {
+        self.parenthesize(&unary.operator.to_string(), &unary.expr, None)
     }
 }
 
@@ -30,8 +30,8 @@ impl AstPrinter {
     fn parenthesize(
         &self,
         name: &str,
-        lhs: &dyn Expr,
-        rhs: Option<&dyn Expr>,
+        lhs: &Box<dyn Expr + '_>,
+        rhs: Option<&Box<dyn Expr + '_>>,
     ) -> String {
         let mut output = String::with_capacity(2 * 3);
 

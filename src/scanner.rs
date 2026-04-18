@@ -1,5 +1,5 @@
 use crate::interpreter_error::InterpreterError;
-use crate::keywords::get_keyword;
+use crate::token::TokenKind::{Comment, Identifier, SelfContained, Value};
 use crate::token::{LiteralValue, Token};
 use crate::token_type::TokenType;
 use crate::token_type::TokenType as TT;
@@ -43,7 +43,12 @@ impl<'a> Scanner<'a> {
                 Err(error) => errors.push(error),
             }
         }
-        tokens.push(Token::new(TT::EOF, "", None, self.iter.line()));
+        tokens.push(Token::new(
+            SelfContained {
+                token_type: TT::EOF,
+            },
+            self.iter.line(),
+        ));
         ScanResult { tokens, errors }
     }
 
@@ -91,8 +96,8 @@ impl<'a> Scanner<'a> {
         token_type: TokenType,
         size: usize,
     ) -> Token<'a> {
-        let lexeme = self.iter.consume_chars(size);
-        Token::new(token_type, lexeme, None, self.iter.line())
+        let _ = self.iter.consume_chars(size);
+        Token::new(SelfContained { token_type }, self.iter.line())
     }
 
     fn build_compound(
@@ -124,8 +129,8 @@ impl<'a> Scanner<'a> {
                 && lexeme.is_char_boundary(lexeme.len() - 1),
             r#"The first and last chars are '"'"#
         );
-        let value = LiteralValue::String(&lexeme[1..lexeme.len() - 1]);
-        Ok(Token::new(TT::STRING, lexeme, Some(value), line))
+        let literal_value = LiteralValue::String(&lexeme[1..lexeme.len() - 1]);
+        Ok(Token::new(Value { literal_value }, line))
     }
 
     fn build_number(&mut self) -> Token<'a> {
@@ -135,13 +140,28 @@ impl<'a> Scanner<'a> {
                 .parse::<f64>()
                 .expect("Consume number guarantees valid float syntax"),
         );
-        Token::new(TT::NUMBER, lexeme, Some(value), self.iter.line())
+        Token::new(
+            Value {
+                literal_value: value,
+            },
+            self.iter.line(),
+        )
     }
 
     fn build_identifier(&mut self) -> Token<'a> {
         let lexeme = self.iter.consume_identifier();
-        let token_type = get_keyword(lexeme).unwrap_or(TT::IDENTIFIER);
-        Token::new(token_type, lexeme, None, self.iter.line())
+        let token_type = TT::from_lexeme(lexeme);
+
+        let token_kind =
+            token_type.map_or(Identifier { name: lexeme }, |operator| {
+                LiteralValue::from_keyword(operator).map_or(
+                    SelfContained {
+                        token_type: operator,
+                    },
+                    |literal_value| Value { literal_value },
+                )
+            });
+        Token::new(token_kind, self.iter.line())
     }
 
     fn scan_unexpected(&mut self) -> InterpreterError<'a> {
@@ -155,7 +175,7 @@ impl<'a> Scanner<'a> {
 
     fn build_comment(&mut self) -> Token<'a> {
         let lexeme = self.iter.consume_comment();
-        Token::new(TT::COMMENT, lexeme, None, self.iter.line())
+        Token::new(Comment { comment: lexeme }, self.iter.line())
     }
 }
 

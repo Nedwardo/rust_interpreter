@@ -1,11 +1,11 @@
 mod expressions;
 mod interpreter_error;
-mod keywords;
-// mod parser;
+mod parser;
 mod read_file_error;
 mod scanner;
 mod token;
 mod token_type;
+use parser::parser::Parser;
 use read_file_error::ReadFileError;
 use scanner::Scanner;
 use std::env::args;
@@ -58,6 +58,6 @@ fn run(file: &str) {
     let tokens = scanner.scan_tokens();
 
     for token in &tokens.tokens {
-        println!("{token}");
+        println!("{token:?}");
     }
 }
