@@ -5,7 +5,6 @@ mod read_file_error;
 mod scanner;
 mod token;
 mod token_type;
-use parser::parser::Parser;
 use read_file_error::ReadFileError;
 use scanner::Scanner;
 use std::env::args;

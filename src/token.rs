@@ -2,6 +2,24 @@ use crate::token_type::TokenType as TT;
 use core::fmt;
 use core::fmt::{Debug, Display, Formatter};
 
+#[allow(clippy::struct_field_names, reason = "Would otherwise be named type")]
+#[cfg_attr(test, derive(Copy, Clone))]
+#[derive(Debug)]
+pub struct Token<'a> {
+    pub token_kind: TokenKind<'a>,
+    pub line: usize,
+}
+
+#[cfg_attr(test, derive(Copy, Clone, PartialEq))]
+#[derive(Debug)]
+pub enum TokenKind<'a> {
+    Value(LiteralValue<'a>),
+    Identifier(&'a str),
+    SelfContained(TT),
+    Comment(&'a str),
+}
+
+#[cfg_attr(test, derive(Copy, Clone, PartialEq))]
 #[derive(Debug)]
 pub enum LiteralValue<'a> {
     String(&'a str),
@@ -9,6 +27,42 @@ pub enum LiteralValue<'a> {
     False,
     True,
     Nil,
+}
+
+impl<'a> Token<'a> {
+    pub const fn new(token_kind: TokenKind<'a>, line: usize) -> Self {
+        Token { token_kind, line }
+    }
+}
+
+impl PartialEq<TT> for TokenKind<'_> {
+    fn eq(&self, other: &TT) -> bool {
+        match self {
+            Self::Value(literal_value) => *literal_value == *other,
+            Self::Identifier(..) => *other == TT::IDENTIFIER,
+            Self::SelfContained(token_type) => other == token_type,
+            Self::Comment(..) => *other == TT::COMMENT,
+        }
+    }
+}
+
+impl Display for TokenKind<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Value(literal_value) => {
+                write!(f, "Value {literal_value}")
+            }
+            Self::Identifier(name) => {
+                write!(f, "Identifier {name}")
+            }
+            Self::SelfContained(token_type) => {
+                write!(f, "SelfContained {token_type}")
+            }
+            Self::Comment(comment) => {
+                write!(f, "Comment {comment}")
+            }
+        }
+    }
 }
 
 impl LiteralValue<'_> {
@@ -46,53 +100,32 @@ impl Display for LiteralValue<'_> {
     }
 }
 
-#[derive(Debug)]
-pub enum TokenKind<'a> {
-    Value { literal_value: LiteralValue<'a> },
-    Identifier { name: &'a str },
-    SelfContained { token_type: TT },
-    Comment { comment: &'a str },
-}
-
-impl PartialEq<TT> for TokenKind<'_> {
-    fn eq(&self, other: &TT) -> bool {
+#[cfg(test)]
+impl PartialEq<f64> for TokenKind<'_> {
+    fn eq(&self, other: &f64) -> bool {
         match self {
-            Self::Value { literal_value } => *literal_value == *other,
-            Self::Identifier { .. } => *other == TT::IDENTIFIER,
-            Self::SelfContained { token_type } => other == token_type,
-            Self::Comment { .. } => *other == TT::COMMENT,
+            Self::Value(literal_value) => literal_value == other,
+            _ => false,
         }
     }
 }
 
-impl Display for TokenKind<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+#[cfg(test)]
+impl PartialEq<&str> for LiteralValue<'_> {
+    fn eq(&self, other: &&str) -> bool {
         match self {
-            Self::Value { literal_value } => {
-                write!(f, "Value ({literal_value})")
-            }
-            Self::Identifier { name } => {
-                write!(f, "Identifier ({name})")
-            }
-            Self::SelfContained { token_type } => {
-                write!(f, "SelfContained ({token_type})")
-            }
-            Self::Comment { comment } => {
-                write!(f, "Comment ({comment})")
-            }
+            Self::String(string) => other == string,
+            _ => false,
         }
     }
 }
 
-#[allow(clippy::struct_field_names, reason = "Would otherwise be named type")]
-#[derive(Debug)]
-pub struct Token<'a> {
-    pub token_kind: TokenKind<'a>,
-    pub line: usize,
-}
-
-impl<'a> Token<'a> {
-    pub const fn new(token_kind: TokenKind<'a>, line: usize) -> Self {
-        Token { token_kind, line }
+#[cfg(test)]
+impl PartialEq<f64> for LiteralValue<'_> {
+    fn eq(&self, other: &f64) -> bool {
+        match self {
+            Self::Number(num) => other == num,
+            _ => false,
+        }
     }
 }
