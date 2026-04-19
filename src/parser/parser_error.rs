@@ -25,6 +25,16 @@ impl ParserError<'_> {
     }
 }
 
+pub trait WrapErr<'a, T> {
+    fn wrap_err(self, expr: &'static str) -> Result<T, ParserError<'a>>;
+}
+
+impl<'a, T> WrapErr<'a, T> for Result<T, ParserError<'a>> {
+    fn wrap_err(self, expr: &'static str) -> Self {
+        self.map_err(|e| e.wrap(expr))
+    }
+}
+
 impl Display for ParserError<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match &self {

@@ -10,8 +10,8 @@ pub struct Token<'a> {
     pub line: usize,
 }
 
-#[cfg_attr(test, derive(Copy, Clone, PartialEq))]
-#[derive(Debug)]
+#[cfg_attr(test, derive(Copy, Clone))]
+#[derive(Debug, PartialEq)]
 pub enum TokenKind<'a> {
     Value(LiteralValue<'a>),
     Identifier(&'a str),
@@ -19,8 +19,8 @@ pub enum TokenKind<'a> {
     Comment(&'a str),
 }
 
-#[cfg_attr(test, derive(Copy, Clone, PartialEq))]
-#[derive(Debug)]
+#[cfg_attr(test, derive(Copy, Clone))]
+#[derive(Debug, PartialEq)]
 pub enum LiteralValue<'a> {
     String(&'a str),
     Number(f64),
@@ -74,6 +74,12 @@ impl LiteralValue<'_> {
             _ => None,
         }
     }
+    pub const fn token_types() -> &'static [TT] {
+        static TOKEN_TYPES: [TT; 5] =
+            [TT::STRING, TT::NUMBER, TT::FALSE, TT::TRUE, TT::NIL];
+
+        &TOKEN_TYPES
+    }
 }
 
 impl PartialEq<TT> for LiteralValue<'_> {
@@ -101,30 +107,10 @@ impl Display for LiteralValue<'_> {
 }
 
 #[cfg(test)]
-impl PartialEq<f64> for TokenKind<'_> {
-    fn eq(&self, other: &f64) -> bool {
-        match self {
-            Self::Value(literal_value) => literal_value == other,
-            _ => false,
-        }
-    }
-}
-
-#[cfg(test)]
 impl PartialEq<&str> for LiteralValue<'_> {
     fn eq(&self, other: &&str) -> bool {
         match self {
             Self::String(string) => other == string,
-            _ => false,
-        }
-    }
-}
-
-#[cfg(test)]
-impl PartialEq<f64> for LiteralValue<'_> {
-    fn eq(&self, other: &f64) -> bool {
-        match self {
-            Self::Number(num) => other == num,
             _ => false,
         }
     }
