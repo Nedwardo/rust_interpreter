@@ -4,7 +4,7 @@ mod read_file_error;
 mod scanner;
 mod token;
 mod token_type;
-use expressions::printers::ast_print;
+use expressions::ast_print;
 use parser::Parser;
 use read_file_error::ReadFileError;
 use scanner::Scanner;

@@ -1,5 +1,3 @@
-pub mod printers;
-
 use crate::token::LiteralValue;
 use crate::token_type::TokenType;
 use std::fmt::Write;
