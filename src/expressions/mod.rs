@@ -19,7 +19,7 @@ pub enum Expr<'a> {
 }
 
 impl Expr<'_> {
-    pub fn traverse<T>(
+    pub fn visit<T>(
         &self,
         collector: &impl Fn(&str, Option<&Expr>, Option<&Expr>) -> T,
     ) -> T {

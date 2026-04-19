@@ -2,11 +2,11 @@ use super::Expr;
 use std::fmt::Write;
 
 pub fn ast_print(expr: &Expr) -> String {
-    expr.traverse(&ast_print_node)
+    expr.visit(&ast_print_node)
 }
 
 pub fn rpn_print(expr: &Expr) -> String {
-    expr.traverse(&rpn_print_node)
+    expr.visit(&rpn_print_node)
 }
 
 #[allow(unused, reason = "string write! cannot fail")]
@@ -24,14 +24,10 @@ fn ast_print_node(
                 &mut output,
                 "({} {}",
                 name,
-                left_child.traverse(&ast_print_node)
+                left_child.visit(&ast_print_node)
             );
             if let Some(right_child) = rhs {
-                write!(
-                    &mut output,
-                    " {}",
-                    right_child.traverse(&ast_print_node)
-                );
+                write!(&mut output, " {}", right_child.visit(&ast_print_node));
             }
             write!(&mut output, ")");
 
