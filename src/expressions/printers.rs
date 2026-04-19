@@ -45,9 +45,9 @@ fn rpn_print_node(
     let mut output = String::with_capacity(2 * 3);
 
     if let Some(left_child) = lhs {
-        write!(&mut output, "{} ", left_child.traverse(&rpn_print_node));
+        write!(&mut output, "{} ", left_child.visit(&rpn_print_node));
         if let Some(right_child) = rhs {
-            write!(&mut output, "{} ", right_child.traverse(&rpn_print_node));
+            write!(&mut output, "{} ", right_child.visit(&rpn_print_node));
         }
     }
     write!(&mut output, "{name}");
