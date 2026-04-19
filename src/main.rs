@@ -18,7 +18,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = args().collect();
 
     match args.as_slice() {
-        [_] => run_prompt(),
+        [_] => {
+            run_prompt();
+            Ok(())
+        }
         [_, file] => run_file(file),
         _ => Err("Usage: jlox [script]".into()),
     }?;
@@ -36,7 +39,8 @@ fn run_file(script_address: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn run_prompt() -> Result<(), Box<dyn Error>> {
+#[allow(clippy::print_stderr, reason = "cli app")]
+fn run_prompt() {
     let mut buffer = stdout();
     let mut line: String;
     loop {
@@ -45,12 +49,16 @@ fn run_prompt() -> Result<(), Box<dyn Error>> {
         buffer
             .flush()
             .expect("I'm not sure how you could error this, good job");
-        match stdin().read_line(&mut line) {
-            Err(_) => break,
-            Ok(_) => run(&line)?,
+
+        if stdin().read_line(&mut line).is_err() {
+            break;
+        }
+
+        line.truncate(line.len() - 1);
+        if let Err(err) = run(&line) {
+            eprintln!("{err}");
         }
     }
-    Ok(())
 }
 
 fn run(file: &str) -> Result<(), Box<dyn Error>> {

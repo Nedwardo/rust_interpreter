@@ -337,17 +337,37 @@ impl ScannerError<'_> {
                 )
             },
             |error_location| {
-                format!(
-                    "Error during scanning: {}\n  {: >3} | {}\n`{}` - {}",
-                    self.message,
+                highlight_line_selection(
                     self.line,
                     source_line,
                     error_location,
-                    self.message
+                ).map_or_else(
+                || format!("Errored generating the error message for {self:?}\nCouldn't find {error_location:?} in {source_line:?}")
+                , |line_selection|             
+
+                format!(
+                    "Error during scanning: {}\n{}",
+                    self.message, line_selection
+                )
                 )
             },
         )
     }
+}
+
+fn highlight_line_selection(
+    line_number: usize,
+    line: &str,
+    substr: &str,
+) -> Option<String> {
+    let start_index = line.find(substr)?;
+    let carets = "^".repeat(substr.len());
+
+    let substring_highlighter =
+        format!("{carets:>width$}", width = start_index + substr.len());
+    Some(format!(
+        "{line_number:>4} | {line}\n     | {substring_highlighter}"
+    ))
 }
 
 impl Error for ScannerErrors {}
@@ -492,8 +512,8 @@ mod tokenizer_tests {
         let error = Scanner::new(r#""no end"#).scan_tokens().unwrap_err();
         let expected_error_message = concat!(
             "Error during scanning: Unterminated string\n",
-            "    1 | \"no end\n",
-            "`\"no end` - Unterminated string\n"
+            r#"   1 | "no end"#, "\n",
+            r#"     | ^^^^^^^"#, "\n"
         );
 
         assert_eq!(error.to_string(), expected_error_message);
@@ -504,8 +524,8 @@ mod tokenizer_tests {
         let error = Scanner::new(r#"""#).scan_tokens().unwrap_err();
         let expected_error_message = concat!(
             "Error during scanning: Unterminated string\n",
-            "    1 | \"\n",
-            "`\"` - Unterminated string\n"
+            r#"   1 | ""#, "\n",
+            r#"     | ^"#, "\n"
         );
 
         assert_eq!(error.to_string(), expected_error_message);
@@ -608,12 +628,12 @@ mod tokenizer_tests {
 
         let expected_error_message = concat!(
             "Error during scanning: Unexpected character\n",
-            "    1 | @+`\n",
-            "`@` - Unexpected character\n",
+            "   1 | @+`\n",
+            "     | ^\n",
             "\n",
             "Error during scanning: Unexpected character\n",
-            "    1 | @+`\n",
-            "``` - Unexpected character\n"
+            "   1 | @+`\n",
+            "     |   ^\n",
         );
 
         assert_eq!(error.to_string(), expected_error_message);
