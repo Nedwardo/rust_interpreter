@@ -1,11 +1,12 @@
 mod expressions;
+// mod interpreter;
 mod parser;
 mod read_file_error;
 mod scanner;
 mod token;
 mod token_type;
-use expressions::ast_print;
-use parser::Parser;
+use expressions::format_ast;
+use parser::parse;
 use read_file_error::ReadFileError;
 use scanner::Scanner;
 use std::env::args;
@@ -65,11 +66,11 @@ fn run(file: &str) -> Result<(), Box<dyn Error>> {
     let mut scanner = Scanner::new(file);
     let tokens = scanner.scan_tokens().map_err(Box::new)?;
 
-    let mut parser = Parser::new(tokens);
-    let expression = parser.parse();
+    let expression = parse(tokens);
 
-    if let Ok(expr) = expression {
-        ast_print(&expr);
+    match expression {
+        Ok(expr) => println!("{}", format_ast(&expr)),
+        Err(err) => eprintln!("Failed to parse {err:?}"),
     }
 
     Ok(())

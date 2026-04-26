@@ -10,14 +10,15 @@ pub enum ParserError<'a> {
         token: Option<Token<'a>>,
         expected_token_types: &'static [TokenType],
     },
+    UnexpectedEOF,
     FailedToGenerateChildExpr {
-        expr: &'static str,
+        expr: String,
         source: Box<Self>,
     },
 }
 
 impl ParserError<'_> {
-    fn wrap(self, expr: &'static str) -> Self {
+    pub fn wrap(self, expr: String) -> Self {
         Self::FailedToGenerateChildExpr {
             expr,
             source: Box::new(self),
@@ -26,11 +27,11 @@ impl ParserError<'_> {
 }
 
 pub trait WrapErr<'a, T> {
-    fn wrap_err(self, expr: &'static str) -> Result<T, ParserError<'a>>;
+    fn wrap_err(self, expr: String) -> Result<T, ParserError<'a>>;
 }
 
 impl<'a, T> WrapErr<'a, T> for Result<T, ParserError<'a>> {
-    fn wrap_err(self, expr: &'static str) -> Self {
+    fn wrap_err(self, expr: String) -> Self {
         self.map_err(|e| e.wrap(expr))
     }
 }
@@ -57,6 +58,9 @@ impl Display for ParserError<'_> {
                     f,
                     "Failed to genererate Expr {expr:?}, cause:\n{source}"
                 )
+            }
+            Self::UnexpectedEOF => {
+                write!(f, "Unexpected EOF")
             }
         }
     }

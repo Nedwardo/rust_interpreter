@@ -19,6 +19,8 @@ pub enum TokenType {
     SEMICOLON,
     SLASH,
     STAR,
+    QUESTION_MARK,
+    COLON,
 
     // One or two character tokens.
     BANG,
@@ -97,6 +99,8 @@ impl Display for TokenType {
             SEMICOLON => ";",
             SLASH => "/",
             STAR => "*",
+            QUESTION_MARK => "?",
+            COLON => ":",
 
             BANG => "!",
             BANG_EQUAL => "!=",

@@ -1,5 +1,5 @@
-use crate::token::TokenKind::{Comment, Identifier, SelfContained, Value};
-use crate::token::{LiteralValue, Token};
+use crate::token::Token;
+use crate::token::TokenValue as TV;
 use crate::token_type::TokenType;
 use crate::token_type::TokenType as TT;
 use core::str::Chars;
@@ -53,7 +53,7 @@ impl<'a> Scanner<'a> {
                 Err(error) => errors.push(error),
             }
         }
-        tokens.push(Token::new(SelfContained(TT::EOF), self.iter.line()));
+        tokens.push(Token::new(TT::EOF, self.iter.line()));
 
         if errors.is_empty() {
             Ok(tokens)
@@ -77,6 +77,8 @@ impl<'a> Scanner<'a> {
             '+' => self.build_single_char_token(TT::PLUS),
             ';' => self.build_single_char_token(TT::SEMICOLON),
             '*' => self.build_single_char_token(TT::STAR),
+            '?' => self.build_single_char_token(TT::QUESTION_MARK),
+            ':' => self.build_single_char_token(TT::COLON),
 
             '!' => self.build_compound('=', TT::BANG_EQUAL, TT::BANG),
             '=' => self.build_compound('=', TT::EQUAL_EQUAL, TT::EQUAL),
@@ -107,7 +109,7 @@ impl<'a> Scanner<'a> {
         size: usize,
     ) -> Token<'a> {
         let _ = self.iter.consume_chars(size);
-        Token::new(SelfContained(token_type), self.iter.line())
+        Token::new(token_type, self.iter.line())
     }
 
     fn build_compound(
@@ -139,31 +141,34 @@ impl<'a> Scanner<'a> {
                 && lexeme.is_char_boundary(lexeme.len() - 1),
             r#"The first and last chars are '"'"#
         );
-        let literal_value = LiteralValue::String(&lexeme[1..lexeme.len() - 1]);
-        Ok(Token::new(Value(literal_value), line))
+        let literal_value = TV::String(&lexeme[1..lexeme.len() - 1]);
+        Ok(Token::new_value(TT::STRING, literal_value, line))
     }
 
     fn build_number(&mut self) -> Token<'a> {
         let lexeme = self.iter.consume_number();
-        let value = LiteralValue::Number(
+        let value = TV::Number(
             lexeme
                 .parse::<f64>()
                 .expect("Consume number guarantees valid float syntax"),
         );
-        Token::new(Value(value), self.iter.line())
+        Token::new_value(TT::NUMBER, value, self.iter.line())
     }
 
     fn build_identifier(&mut self) -> Token<'a> {
         let lexeme = self.iter.consume_identifier();
-        let token_type = TT::from_lexeme(lexeme);
+        if let Some(keyword) = TT::from_lexeme(lexeme) {
+            if let Some(value) = TV::from_keyword(keyword) {
+                return Token::new_value(keyword, value, self.iter.line());
+            }
+            return Token::new(keyword, self.iter.line());
+        }
 
-        let token_kind = token_type.map_or(Identifier(lexeme), |operator| {
-            LiteralValue::from_keyword(operator)
-                .map_or(SelfContained(operator), |literal_value| {
-                    Value(literal_value)
-                })
-        });
-        Token::new(token_kind, self.iter.line())
+        Token::new_value(
+            TT::IDENTIFIER,
+            TV::Identifier(lexeme),
+            self.iter.line(),
+        )
     }
 
     fn scan_unexpected(&mut self) -> ScannerError<'a> {
@@ -177,7 +182,7 @@ impl<'a> Scanner<'a> {
 
     fn build_comment(&mut self) -> Token<'a> {
         let lexeme = self.iter.consume_comment();
-        Token::new(Comment(lexeme), self.iter.line())
+        Token::new_value(TT::COMMENT, TV::Comment(lexeme), self.iter.line())
     }
 }
 
@@ -343,9 +348,7 @@ impl ScannerError<'_> {
                     error_location,
                 ).map_or_else(
                 || format!("Errored generating the error message for {self:?}\nCouldn't find {error_location:?} in {source_line:?}")
-                , |line_selection|             
-
-                format!(
+                , |line_selection| format!(
                     "Error during scanning: {}\n{}",
                     self.message, line_selection
                 )
@@ -361,10 +364,11 @@ fn highlight_line_selection(
     substr: &str,
 ) -> Option<String> {
     let start_index = line.find(substr)?;
-    let carets = "^".repeat(substr.len());
+    let substr_length = substr.chars().count();
+    let carets = "^".repeat(substr_length);
 
     let substring_highlighter =
-        format!("{carets:>width$}", width = start_index + substr.len());
+        format!("{carets:>width$}", width = start_index + substr_length);
     Some(format!(
         "{line_number:>4} | {line}\n     | {substring_highlighter}"
     ))
@@ -381,19 +385,19 @@ impl Error for ScannerErrors {}
 #[cfg(test)]
 mod tokenizer_tests {
     use super::*;
-    use crate::token::TokenKind;
+    use crate::token::TokenValue;
     #[test]
     fn empty_input_yields_only_eof() {
         let tokens = Scanner::new("").scan_tokens().unwrap();
 
         assert_eq!(tokens.len(), 1);
-        assert_eq!(tokens[0].token_kind, TT::EOF);
+        assert_eq!(tokens[0].token_type, TT::EOF);
     }
 
     #[test]
     fn single_char_tokens() {
         let tokens = Scanner::new("(){},.-+;*").scan_tokens().unwrap();
-        let types: Vec<_> = tokens.into_iter().map(|t| t.token_kind).collect();
+        let types: Vec<_> = tokens.into_iter().map(|t| t.token_type).collect();
 
         let expected_types = vec![
             TT::LEFT_PAREN,
@@ -415,7 +419,7 @@ mod tokenizer_tests {
     #[test]
     fn compound_operators_prefer_two_char() {
         let tokens = Scanner::new("!= == <= >= ! = < >").scan_tokens().unwrap();
-        let types: Vec<_> = tokens.into_iter().map(|t| t.token_kind).collect();
+        let types: Vec<_> = tokens.into_iter().map(|t| t.token_type).collect();
 
         let expected_types = vec![
             TT::BANG_EQUAL,
@@ -435,7 +439,7 @@ mod tokenizer_tests {
     #[test]
     fn slash_is_division_when_not_doubled() {
         let tokens = Scanner::new("a / b").scan_tokens().unwrap();
-        let types: Vec<_> = tokens.into_iter().map(|t| t.token_kind).collect();
+        let types: Vec<_> = tokens.into_iter().map(|t| t.token_type).collect();
 
         let expected_types =
             vec![TT::IDENTIFIER, TT::SLASH, TT::IDENTIFIER, TT::EOF];
@@ -447,7 +451,7 @@ mod tokenizer_tests {
     fn comment_consumes_to_newline() {
         let tokens =
             Scanner::new("// this is ignored\n+").scan_tokens().unwrap();
-        let types: Vec<_> = tokens.into_iter().map(|t| t.token_kind).collect();
+        let types: Vec<_> = tokens.into_iter().map(|t| t.token_type).collect();
 
         let expected_types = vec![TT::COMMENT, TT::PLUS, TT::EOF];
 
@@ -457,7 +461,7 @@ mod tokenizer_tests {
     #[test]
     fn whitespace_is_skipped_but_tracks_lines() {
         let tokens = Scanner::new("  \t\r\n+\n\n-").scan_tokens().unwrap();
-        let types: Vec<_> = tokens.iter().map(|t| t.token_kind).collect();
+        let types: Vec<_> = tokens.iter().map(|t| t.token_type).collect();
         let lines: Vec<_> = tokens.iter().map(|t| t.line).collect();
 
         let expected_types = vec![TT::PLUS, TT::MINUS, TT::EOF];
@@ -473,12 +477,12 @@ mod tokenizer_tests {
         let token = &tokens[0];
 
         let expected_token_type = TT::STRING;
-        let expected_literal = TokenKind::Value(LiteralValue::String("hello"));
+        let expected_literal = TokenValue::String("hello");
 
         assert_eq!(tokens.len(), 2);
-        assert_eq!(token.token_kind, expected_token_type);
-        assert_eq!(token.token_kind, expected_literal);
-        assert_eq!(tokens[1].token_kind, TT::EOF);
+        assert_eq!(token.token_type, expected_token_type);
+        assert_eq!(token.token_value, Some(expected_literal));
+        assert_eq!(tokens[1].token_type, TT::EOF);
     }
 
     #[test]
@@ -487,12 +491,12 @@ mod tokenizer_tests {
         let token = &tokens[0];
 
         let expected_token_type = TT::STRING;
-        let expected_literal = TokenKind::Value(LiteralValue::String(""));
+        let expected_literal = TokenValue::String("");
 
         assert_eq!(tokens.len(), 2);
-        assert_eq!(token.token_kind, expected_token_type);
-        assert_eq!(token.token_kind, expected_literal);
-        assert_eq!(tokens[1].token_kind, TT::EOF);
+        assert_eq!(token.token_type, expected_token_type);
+        assert_eq!(token.token_value, Some(expected_literal));
+        assert_eq!(tokens[1].token_type, TT::EOF);
     }
 
     #[test]
@@ -500,11 +504,11 @@ mod tokenizer_tests {
         let tokens = Scanner::new("\"line1\nline2\"\n+").scan_tokens().unwrap();
 
         assert_eq!(tokens.len(), 3);
-        assert_eq!(tokens[0].token_kind, TT::STRING);
+        assert_eq!(tokens[0].token_type, TT::STRING);
         assert_eq!(tokens[0].line, 1);
-        assert_eq!(tokens[1].token_kind, TT::PLUS);
+        assert_eq!(tokens[1].token_type, TT::PLUS);
         assert_eq!(tokens[1].line, 3);
-        assert_eq!(tokens[2].token_kind, TT::EOF);
+        assert_eq!(tokens[2].token_type, TT::EOF);
     }
 
     #[test]
@@ -512,8 +516,10 @@ mod tokenizer_tests {
         let error = Scanner::new(r#""no end"#).scan_tokens().unwrap_err();
         let expected_error_message = concat!(
             "Error during scanning: Unterminated string\n",
-            r#"   1 | "no end"#, "\n",
-            r#"     | ^^^^^^^"#, "\n"
+            r#"   1 | "no end"#,
+            "\n",
+            r#"     | ^^^^^^^"#,
+            "\n"
         );
 
         assert_eq!(error.to_string(), expected_error_message);
@@ -524,8 +530,10 @@ mod tokenizer_tests {
         let error = Scanner::new(r#"""#).scan_tokens().unwrap_err();
         let expected_error_message = concat!(
             "Error during scanning: Unterminated string\n",
-            r#"   1 | ""#, "\n",
-            r#"     | ^"#, "\n"
+            r#"   1 | ""#,
+            "\n",
+            r#"     | ^"#,
+            "\n"
         );
 
         assert_eq!(error.to_string(), expected_error_message);
@@ -537,28 +545,28 @@ mod tokenizer_tests {
         let mut token = tokens[0];
 
         let expected_token_type = TT::NUMBER;
-        let mut expected_token_literal = Value(LiteralValue::Number(123.0));
+        let mut expected_token_literal = TokenValue::Number(123.0);
 
         assert_eq!(tokens.len(), 2);
-        assert_eq!(token.token_kind, expected_token_type);
-        assert_eq!(token.token_kind, expected_token_literal);
-        assert_eq!(tokens[1].token_kind, TT::EOF);
+        assert_eq!(token.token_type, expected_token_type);
+        assert_eq!(token.token_value, Some(expected_token_literal));
+        assert_eq!(tokens[1].token_type, TT::EOF);
 
         tokens = Scanner::new("3.15").scan_tokens().unwrap();
         token = tokens[0];
 
-        expected_token_literal = Value(LiteralValue::Number(3.15));
+        expected_token_literal = TokenValue::Number(3.15);
 
         assert_eq!(tokens.len(), 2);
-        assert_eq!(token.token_kind, expected_token_type);
-        assert_eq!(token.token_kind, expected_token_literal);
-        assert_eq!(tokens[1].token_kind, TT::EOF);
+        assert_eq!(token.token_type, expected_token_type);
+        assert_eq!(token.token_value, Some(expected_token_literal));
+        assert_eq!(tokens[1].token_type, TT::EOF);
     }
 
     #[test]
     fn trailing_dot_is_separate_token() {
         let tokens = Scanner::new("123.").scan_tokens().unwrap();
-        let types: Vec<_> = tokens.into_iter().map(|t| t.token_kind).collect();
+        let types: Vec<_> = tokens.into_iter().map(|t| t.token_type).collect();
 
         let expected_types = vec![TT::NUMBER, TT::DOT, TT::EOF];
 
@@ -568,7 +576,7 @@ mod tokenizer_tests {
     #[test]
     fn leading_dot_is_separate_token() {
         let tokens = Scanner::new(".123").scan_tokens().unwrap();
-        let types: Vec<_> = tokens.into_iter().map(|t| t.token_kind).collect();
+        let types: Vec<_> = tokens.into_iter().map(|t| t.token_type).collect();
 
         let expected_types = vec![TT::DOT, TT::NUMBER, TT::EOF];
 
@@ -578,7 +586,7 @@ mod tokenizer_tests {
     #[test]
     fn identifier_vs_keyword() {
         let tokens = Scanner::new("var foo if").scan_tokens().unwrap();
-        let types: Vec<_> = tokens.into_iter().map(|t| t.token_kind).collect();
+        let types: Vec<_> = tokens.into_iter().map(|t| t.token_type).collect();
 
         let expected_types = vec![TT::VAR, TT::IDENTIFIER, TT::IF, TT::EOF];
 
@@ -588,7 +596,7 @@ mod tokenizer_tests {
     #[test]
     fn identifier_with_underscore_and_digits() {
         let tokens = Scanner::new("_foo bar123 _").scan_tokens().unwrap();
-        let types: Vec<_> = tokens.iter().map(|t| t.token_kind).collect();
+        let types: Vec<_> = tokens.iter().map(|t| t.token_type).collect();
 
         let expected_types =
             vec![TT::IDENTIFIER, TT::IDENTIFIER, TT::IDENTIFIER, TT::EOF];
@@ -596,17 +604,17 @@ mod tokenizer_tests {
         assert_eq!(tokens.len(), 4);
 
         assert_eq!(types, expected_types);
-        assert_eq!(tokens[0].token_kind, Identifier("_foo"));
-        assert_eq!(tokens[1].token_kind, Identifier("bar123"));
-        assert_eq!(tokens[2].token_kind, Identifier("_"));
-        assert_eq!(tokens[3].token_kind, TT::EOF);
+        assert_eq!(tokens[0].token_value, Some(TV::Identifier("_foo")));
+        assert_eq!(tokens[1].token_value, Some(TV::Identifier("bar123")));
+        assert_eq!(tokens[2].token_value, Some(TV::Identifier("_")));
+        assert_eq!(tokens[3].token_type, TT::EOF);
     }
 
     #[test]
     fn identifier_cannot_start_with_digit() {
         let result = Scanner::new("123abc").scan_tokens();
         let types: Vec<_> =
-            result.unwrap().into_iter().map(|t| t.token_kind).collect();
+            result.unwrap().into_iter().map(|t| t.token_type).collect();
 
         let expected_types = vec![TT::NUMBER, TT::IDENTIFIER, TT::EOF];
         assert_eq!(types, expected_types);
@@ -616,7 +624,7 @@ mod tokenizer_tests {
     fn comment_skips_until_eol() {
         let result = Scanner::new("123//some words if\n+").scan_tokens();
         let types: Vec<_> =
-            result.unwrap().into_iter().map(|t| t.token_kind).collect();
+            result.unwrap().into_iter().map(|t| t.token_type).collect();
 
         let expected_types = vec![TT::NUMBER, TT::COMMENT, TT::PLUS, TT::EOF];
         assert_eq!(types, expected_types);
@@ -644,7 +652,7 @@ mod tokenizer_tests {
         for src in ["", " "] {
             let tokens = Scanner::new(src).scan_tokens().unwrap();
 
-            assert_eq!(tokens.iter().last().unwrap().token_kind, TT::EOF);
+            assert_eq!(tokens.iter().last().unwrap().token_type, TT::EOF);
         }
     }
 }

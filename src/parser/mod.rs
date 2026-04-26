@@ -1,37 +1,164 @@
 pub mod parser_error;
 use crate::expressions::Expr;
-use crate::expressions::Expr::{Binary, Grouping, Literal, Unary};
+use crate::expressions::UnaryOperator;
+use crate::expressions::Value;
+use crate::parser::parser_error::ParserError;
 use crate::parser::parser_error::WrapErr;
-use crate::token::TokenKind::SelfContained;
-use crate::token::{LiteralValue, Token, TokenKind};
+use crate::token::Token;
+use crate::token::TokenValue as VT;
 use crate::token_type::TokenType as TT;
-use parser_error::ParserError;
-use parser_error::ParserError::UnexpectedToken;
 use std::iter::Peekable;
 use std::vec::IntoIter;
 use std::vec::Vec;
 
+pub const fn prefix_precedence(token_type: UnaryOperator) -> usize {
+    match token_type {
+        UnaryOperator::BANG | UnaryOperator::MINUS => 13,
+    }
+}
+
+pub const fn infix_precedence(token_type: TT) -> Option<(usize, usize)> {
+    match token_type {
+        TT::COMMA => Some((1, 2)),
+        TT::QUESTION_MARK | TT::COLON => Some((4, 3)),
+        TT::EQUAL_EQUAL | TT::BANG_EQUAL => Some((5, 6)),
+        TT::LESS | TT::LESS_EQUAL | TT::GREATER | TT::GREATER_EQUAL => {
+            Some((7, 8))
+        }
+        TT::PLUS | TT::MINUS => Some((9, 10)),
+        TT::STAR | TT::SLASH => Some((11, 12)),
+        _ => None,
+    }
+}
+
 pub struct Parser<'a> {
-    tokens: Peekable<IntoIter<Token<'a>>>,
+    tokens: IntoIter<Token<'a>>,
+    peeked: Option<Token<'a>>,
+}
+
+pub fn parse(tokens: Vec<Token<'_>>) -> Result<Expr<'_>, ParserError<'_>> {
+    Parser::new(tokens).parse(0)
 }
 
 impl<'a> Parser<'a> {
     pub fn new(tokens: Vec<Token<'a>>) -> Self {
         Parser {
-            tokens: tokens.into_iter().peekable(),
+            tokens: tokens.into_iter(),
+            peeked: None,
         }
     }
 
-    pub fn parse(&mut self) -> Result<Box<Expr<'a>>, ParserError<'a>> {
-        self.expression()
+    fn next(&mut self) -> Option<Token<'a>> {
+        if self.peeked.is_some() {
+            return self.peeked.take();
+        }
+        self.tokens
+            .by_ref()
+            .find(|token| token.token_type != TT::COMMENT)
     }
 
-    fn syncronise(&mut self) {
-        while let Some(token) = self.tokens.next() {
-            if matches!(token.token_kind, SelfContained(TT::SEMICOLON)) {
+    fn peek(&mut self) -> Option<&Token<'a>> {
+        self.peeked = self.next();
+        self.peeked.as_ref()
+    }
+
+    fn parse(
+        &mut self,
+        current_precedence: usize,
+    ) -> Result<Expr<'a>, ParserError<'a>> {
+        let mut lhs = self
+            .parse_prefix()
+            .wrap_err("Failed reading prefix".to_owned())?;
+
+        while let Some(token) = self.peek() {
+            let token_type = token.token_type;
+
+            let Some((l_precedence, r_precedence)) =
+                infix_precedence(token_type)
+            else {
+                break;
+            };
+
+            if l_precedence < current_precedence {
                 break;
             }
-            if self.tokens.peek().is_some_and(|next_token| {
+            self.next();
+            let rhs = self.parse(r_precedence).wrap_err(
+                format!("Failed reading rhs for {token_type:?}").to_owned(),
+            )?;
+            lhs = Expr::Binary {
+                left: Box::new(lhs),
+                operator: token_type,
+                right: Box::new(rhs),
+            };
+        }
+        Ok(lhs)
+    }
+
+    pub fn parse_prefix(&mut self) -> Result<Expr<'a>, ParserError<'a>> {
+        let token = self.next().ok_or(ParserError::UnexpectedEOF)?;
+
+        if let Some(token_value) = token.token_value {
+            return Ok(match token_value {
+                VT::String(text) => {
+                    Expr::Literal(Value::String(text.to_owned()))
+                }
+                VT::Number(number) => Expr::Literal(Value::Number(number)),
+                VT::False => Expr::Literal(Value::Boolean(false)),
+                VT::True => Expr::Literal(Value::Boolean(true)),
+                VT::Nil => Expr::Literal(Value::Nil),
+                VT::Identifier(name) => Expr::Identifier(name),
+                VT::Comment(..) => {
+                    unreachable!("Shouldn't be emitted")
+                }
+            });
+        }
+
+        match token.token_type {
+            TT::BANG => self.build_unary(UnaryOperator::BANG),
+            TT::MINUS => self.build_unary(UnaryOperator::MINUS),
+            TT::LEFT_PAREN => self.build_group(),
+            _ => Err(ParserError::UnexpectedToken {
+                token: Some(token),
+                expected_token_types: &[TT::BANG, TT::MINUS, TT::LEFT_PAREN],
+            }),
+        }
+    }
+
+    fn build_unary(
+        &mut self,
+        unary_op: UnaryOperator,
+    ) -> Result<Expr<'a>, ParserError<'a>> {
+        let precedence = prefix_precedence(unary_op);
+        let expr = Box::new(self.parse(precedence)?);
+        Ok(Expr::Unary {
+            operator: unary_op,
+            expr,
+        })
+    }
+
+    fn build_group(&mut self) -> Result<Expr<'a>, ParserError<'a>> {
+        let inner = self.parse(0)?;
+        let token = self.next().ok_or(ParserError::UnexpectedToken {
+            token: None,
+            expected_token_types: &[TT::RIGHT_PAREN],
+        })?;
+
+        match token.token_type {
+            TT::RIGHT_PAREN => Ok(Expr::Grouping(Box::new(inner))),
+            _ => Err(ParserError::UnexpectedToken {
+                token: Some(token),
+                expected_token_types: &[TT::RIGHT_PAREN],
+            }),
+        }
+    }
+
+    fn syncronise(tokens: &mut Peekable<IntoIter<Token<'_>>>) {
+        while let Some(token) = tokens.next() {
+            if token.token_type == TT::SEMICOLON {
+                break;
+            }
+            if tokens.peek().is_some_and(|next_token| {
                 [
                     TT::CLASS,
                     TT::FUN,
@@ -41,161 +168,10 @@ impl<'a> Parser<'a> {
                     TT::PRINT,
                     TT::RETURN,
                 ]
-                .map(SelfContained)
-                .contains(&next_token.token_kind)
+                .contains(&next_token.token_type)
             }) {
                 break;
             }
-        }
-    }
-
-    fn next_if_match(&mut self, token_types: &[TT]) -> Option<Token<'a>> {
-        if self
-            .tokens
-            .peek()
-            .is_some_and(|t| token_types.iter().any(|tt| &t.token_kind == tt))
-        {
-            self.tokens.next()
-        } else {
-            None
-        }
-    }
-
-    fn next_token_type_if(&mut self, token_types: &'static [TT]) -> Option<TT> {
-        if let Some(token) = self.tokens.peek() {
-            for tt in token_types {
-                if token.token_kind == *tt {
-                    self.tokens.next();
-                    return Some(*tt);
-                }
-            }
-        }
-        None
-    }
-
-    fn consume_literal(
-        &mut self,
-    ) -> Result<LiteralValue<'a>, Option<Token<'a>>> {
-        let token = self.tokens.next().ok_or(None)?;
-
-        match token.token_kind {
-            TokenKind::Value(literal_value) => Ok(literal_value),
-            _ => Err(Some(token)),
-        }
-    }
-
-    pub fn expression(&mut self) -> Result<Box<Expr<'a>>, ParserError<'a>> {
-        self.equality()
-    }
-
-    pub fn equality(&mut self) -> Result<Box<Expr<'a>>, ParserError<'a>> {
-        static CTX: &str = "Equality";
-        static OPERATORS: [TT; 2] = [TT::BANG_EQUAL, TT::EQUAL_EQUAL];
-
-        let mut expr = self.comparison().wrap_err(CTX)?;
-
-        while let Some(operator) = self.next_token_type_if(&OPERATORS) {
-            let rhs = self.comparison().wrap_err(CTX)?;
-            expr = Box::new(Binary {
-                left: expr,
-                operator,
-                right: rhs,
-            });
-        }
-        Ok(expr)
-    }
-
-    pub fn comparison(&mut self) -> Result<Box<Expr<'a>>, ParserError<'a>> {
-        static CTX: &str = "Result";
-        static OPERATORS: [TT; 4] =
-            [TT::GREATER, TT::GREATER_EQUAL, TT::LESS, TT::LESS_EQUAL];
-
-        let mut expr = self.term().wrap_err(CTX)?;
-
-        while let Some(operator) = self.next_token_type_if(&OPERATORS) {
-            let rhs = self.term().wrap_err(CTX)?;
-            expr = Box::new(Binary {
-                left: expr,
-                operator,
-                right: rhs,
-            });
-        }
-        Ok(expr)
-    }
-
-    pub fn term(&mut self) -> Result<Box<Expr<'a>>, ParserError<'a>> {
-        static CTX: &str = "Term";
-        static OPERATORS: [TT; 2] = [TT::MINUS, TT::PLUS];
-
-        let mut expr = self.factor().wrap_err(CTX)?;
-
-        while let Some(operator) = self.next_token_type_if(&OPERATORS) {
-            let rhs = self.factor().wrap_err(CTX)?;
-            expr = Box::new(Binary {
-                left: expr,
-                operator,
-                right: rhs,
-            });
-        }
-        Ok(expr)
-    }
-
-    pub fn factor(&mut self) -> Result<Box<Expr<'a>>, ParserError<'a>> {
-        static CTX: &str = "Factor";
-        static OPERATORS: [TT; 2] = [TT::SLASH, TT::STAR];
-
-        let mut expr = self.unary().wrap_err(CTX)?;
-
-        while let Some(operator) = self.next_token_type_if(&OPERATORS) {
-            let rhs = self.unary().wrap_err(CTX)?;
-            expr = Box::new(Binary {
-                left: expr,
-                operator,
-                right: rhs,
-            });
-        }
-        Ok(expr)
-    }
-
-    pub fn unary(&mut self) -> Result<Box<Expr<'a>>, ParserError<'a>> {
-        static CTX: &str = "Unary";
-        static OPERATORS: [TT; 2] = [TT::BANG, TT::MINUS];
-
-        if let Some(operator) = self.next_token_type_if(&OPERATORS) {
-            let value = self.unary().wrap_err(CTX)?;
-            Ok(Box::new(Unary {
-                operator,
-                expr: value,
-            }))
-        } else {
-            self.primary()
-        }
-    }
-
-    pub fn primary(&mut self) -> Result<Box<Expr<'a>>, ParserError<'a>> {
-        static CTX: &str = "Primary";
-
-        if self.next_token_type_if(&[TT::LEFT_PAREN]).is_some() {
-            let expr = self.expression().wrap_err(CTX)?;
-
-            match self.tokens.next() {
-                Some(token) if token.token_kind == TT::RIGHT_PAREN => Ok(()),
-                Some(token) => Err(Some(token)),
-                None => Err(None),
-            }
-            .map_err(|token| UnexpectedToken {
-                token,
-                expected_token_types: &[TT::RIGHT_PAREN],
-            })?;
-            return Ok(Box::new(Grouping(expr)));
-        }
-
-        match self.consume_literal() {
-            Ok(literal) => Ok(Box::new(Literal(literal))),
-            Err(token) => Err(UnexpectedToken {
-                token,
-                expected_token_types: LiteralValue::token_types(),
-            }),
         }
     }
 }
