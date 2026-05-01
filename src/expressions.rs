@@ -1,23 +1,22 @@
-use crate::token::TokenValue as TV;
 use crate::token_type::TokenType;
+use crate::token_type::operator_subset;
 use std::fmt;
 use std::fmt::{Display, Formatter, Write};
 
-pub enum Expr<'a> {
-    Literal(Value),
-    Identifier(&'a str),
-    Unary {
-        operator: UnaryOperator,
-        expr: Box<Self>,
-    },
-    Grouping(Box<Self>),
-    Binary {
-        left: Box<Self>,
-        operator: TokenType,
-        right: Box<Self>,
-    },
+pub struct Expr<'a> {
+    pub line: usize,
+    pub kind: ExprKind<'a>,
 }
 
+pub enum ExprKind<'a> {
+    Literal(Value),
+    Identifier(&'a str),
+    Unary(Unary<'a>),
+    Grouping(Box<Expr<'a>>),
+    Binary(Binary<'a>),
+}
+
+#[derive(Clone)]
 pub enum Value {
     String(String),
     Number(f64),
@@ -25,78 +24,105 @@ pub enum Value {
     Nil,
 }
 
-#[allow(
-    non_camel_case_types,
-    clippy::upper_case_acronyms,
-    reason = "Using the same names as from the book"
-)]
-#[derive(PartialEq, Eq, Copy, Clone)]
-pub enum UnaryOperator {
-    MINUS,
-    BANG,
+pub struct Unary<'a> {
+    pub operator: UnaryOperator,
+    pub expr: Box<Expr<'a>>,
 }
 
-impl TryFrom<TokenType> for UnaryOperator {
-    type Error = ();
+pub struct Binary<'a> {
+    pub left: Box<Expr<'a>>,
+    pub operator: BinaryOperator,
+    pub right: Box<Expr<'a>>,
+}
 
-    fn try_from(value: TokenType) -> Result<Self, Self::Error> {
-        match value {
-            TokenType::MINUS => Ok(Self::MINUS),
-            TokenType::BANG => Ok(Self::BANG),
-            _ => Err(()),
+operator_subset!(UnaryOperator, {MINUS, BANG});
+operator_subset!(BinaryOperator, {
+    MINUS,
+    PLUS,
+    GREATER,
+    GREATER_EQUAL,
+    BANG_EQUAL,
+    EQUAL_EQUAL,
+    SLASH,
+    STAR,
+    COMMA,
+    QUESTION_MARK,
+    COLON,
+    LESS,
+    LESS_EQUAL,
+});
+
+impl<'a> Expr<'a> {
+    pub const fn new_binary(
+        left: Box<Self>,
+        operator: BinaryOperator,
+        right: Box<Self>,
+        line: usize,
+    ) -> Self {
+        Expr {
+            line,
+            kind: ExprKind::Binary(Binary {
+                left,
+                operator,
+                right,
+            }),
         }
     }
-}
 
-impl<'a> TryFrom<TV<'a>> for Expr<'a> {
-    type Error = ();
-
-    fn try_from(token_value: TV<'a>) -> Result<Self, Self::Error> {
-        let expr = match token_value {
-            TV::String(text) => Expr::Literal(Value::String(text.to_owned())),
-            TV::Number(number) => Expr::Literal(Value::Number(number)),
-            TV::False => Expr::Literal(Value::Boolean(false)),
-            TV::True => Expr::Literal(Value::Boolean(true)),
-            TV::Nil => Expr::Literal(Value::Nil),
-            TV::Identifier(name) => Expr::Identifier(name),
-            TV::Comment(..) => return Err(()),
-        };
-        Ok(expr)
+    pub const fn new_unary(
+        operator: UnaryOperator,
+        expr: Box<Self>,
+        line: usize,
+    ) -> Self {
+        Expr {
+            line,
+            kind: ExprKind::Unary(Unary { operator, expr }),
+        }
     }
-}
 
-impl Expr<'_> {
+    pub const fn new_literal(value: Value, line: usize) -> Self {
+        Expr {
+            line,
+            kind: ExprKind::Literal(value),
+        }
+    }
+
+    pub const fn new_identifier(identifier: &'a str, line: usize) -> Self {
+        Expr {
+            line,
+            kind: ExprKind::Identifier(identifier),
+        }
+    }
+
+    pub const fn new_grouping(grouping: Box<Self>, line: usize) -> Self {
+        Expr {
+            line,
+            kind: ExprKind::Grouping(grouping),
+        }
+    }
+
     pub fn visit<T>(
         &self,
         fold: &impl Fn(&str, Option<&Expr>, Option<&Expr>) -> T,
     ) -> T {
-        match self {
-            Self::Binary {
+        match &self.kind {
+            ExprKind::Binary(Binary {
                 operator,
                 left,
                 right,
-            } => fold(
+            }) => fold(
                 &operator.to_string(),
                 Some(left.as_ref()),
                 Some(right.as_ref()),
             ),
-            Self::Grouping(expression) => {
+            ExprKind::Grouping(expression) => {
                 fold("Group", Some(expression.as_ref()), None)
             }
-            Self::Literal(value) => fold(&value.to_string(), None, None),
-            Self::Unary { operator, expr } => {
+            ExprKind::Literal(value) => fold(&value.to_string(), None, None),
+            ExprKind::Unary(Unary { operator, expr }) => {
                 fold(&operator.to_string(), Some(expr.as_ref()), None)
             }
-            Self::Identifier(name) => fold(name, None, None),
-        }
-    }
-}
-
-impl Display for UnaryOperator {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::MINUS => write!(f, "-"),
-            Self::BANG => write!(f, "!"),
+            ExprKind::Identifier(name) => fold(name, None, None),
         }
     }
 }
@@ -104,10 +130,28 @@ impl Display for UnaryOperator {
 impl Display for Value {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            Self::String(value) => write!(f, "\"{value}\""),
-            Self::Number(value) => write!(f, "{value}"),
-            Self::Boolean(value) => write!(f, "{value}"),
-            Self::Nil => write!(f, "Nil"),
+            Self::String(..) => write!(f, "\"{}\"", self.cast_to_string()),
+            _ => write!(f, "{}", self.cast_to_string()),
+        }
+    }
+}
+
+impl Value {
+    pub const fn type_name(&self) -> &'static str {
+        match self {
+            Self::String(..) => "String",
+            Self::Number(..) => "Number",
+            Self::Boolean(..) => "Boolean",
+            Self::Nil => "nil",
+        }
+    }
+
+    pub fn cast_to_string(&self) -> String {
+        match self {
+            Self::String(value) => value.clone(),
+            Self::Number(value) => format!("{value}"),
+            Self::Boolean(value) => format!("{value}"),
+            Self::Nil => "nil".to_owned(),
         }
     }
 }
@@ -168,19 +212,24 @@ fn rpn_print_node(
 
 #[cfg(test)]
 mod tests {
+    use super::BinaryOperator as BO;
+    use super::UnaryOperator as UO;
     use super::*;
-    use crate::expressions::Expr::{Binary, Grouping, Literal, Unary};
-    use crate::token_type::TokenType::{MINUS, PLUS, STAR};
     #[test]
     fn ast() {
-        let expression = Binary {
-            left: Box::new(Unary {
-                operator: UnaryOperator::MINUS,
-                expr: Box::new(Literal(Value::Number(123.0))),
-            }),
-            operator: STAR,
-            right: Box::new(Grouping(Box::new(Literal(Value::Number(45.67))))),
-        };
+        let expression = Expr::new_binary(
+            Box::new(Expr::new_unary(
+                UO::MINUS,
+                Box::new(Expr::new_literal(Value::Number(123.0), 0)),
+                0,
+            )),
+            BO::STAR,
+            Box::new(Expr::new_grouping(
+                Box::new(Expr::new_literal(Value::Number(45.67), 0)),
+                0,
+            )),
+            0,
+        );
 
         let output = format_ast(&expression);
         println!("{output}");
@@ -189,19 +238,22 @@ mod tests {
 
     #[test]
     fn rpn() {
-        let expression = Binary {
-            left: Box::new(Binary {
-                operator: PLUS,
-                left: Box::new(Literal(Value::Number(1.0))),
-                right: Box::new(Literal(Value::Number(2.0))),
-            }),
-            operator: STAR,
-            right: Box::new(Binary {
-                operator: MINUS,
-                left: Box::new(Literal(Value::Number(4.0))),
-                right: Box::new(Literal(Value::Number(3.0))),
-            }),
-        };
+        let expression = Expr::new_binary(
+            Box::new(Expr::new_binary(
+                Box::new(Expr::new_literal(Value::Number(1.0), 0)),
+                BO::PLUS,
+                Box::new(Expr::new_literal(Value::Number(2.0), 0)),
+                0,
+            )),
+            BO::STAR,
+            Box::new(Expr::new_binary(
+                Box::new(Expr::new_literal(Value::Number(4.0), 0)),
+                BO::MINUS,
+                Box::new(Expr::new_literal(Value::Number(3.0), 0)),
+                0,
+            )),
+            0,
+        );
 
         assert!(format_rpn(&expression) == "1 2 + 4 3 - *");
     }

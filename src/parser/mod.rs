@@ -1,11 +1,12 @@
 pub mod parser_error;
+use crate::expressions::BinaryOperator as BinaryOp;
 use crate::expressions::Expr;
 use crate::expressions::UnaryOperator;
 use crate::expressions::Value;
 use crate::parser::parser_error::ParserError;
 use crate::parser::parser_error::WrapErr;
 use crate::token::Token;
-use crate::token::TokenValue as VT;
+use crate::token::TokenValue as TV;
 use crate::token_type::TokenType as TT;
 use std::iter::Peekable;
 use std::vec::IntoIter;
@@ -17,17 +18,17 @@ pub const fn prefix_precedence(token_type: UnaryOperator) -> usize {
     }
 }
 
-pub const fn infix_precedence(token_type: TT) -> Option<(usize, usize)> {
+pub const fn infix_precedence(token_type: BinaryOp) -> (usize, usize) {
     match token_type {
-        TT::COMMA => Some((1, 2)),
-        TT::QUESTION_MARK | TT::COLON => Some((4, 3)),
-        TT::EQUAL_EQUAL | TT::BANG_EQUAL => Some((5, 6)),
-        TT::LESS | TT::LESS_EQUAL | TT::GREATER | TT::GREATER_EQUAL => {
-            Some((7, 8))
-        }
-        TT::PLUS | TT::MINUS => Some((9, 10)),
-        TT::STAR | TT::SLASH => Some((11, 12)),
-        _ => None,
+        BinaryOp::COMMA => (1, 2),
+        BinaryOp::QUESTION_MARK | BinaryOp::COLON => (4, 3),
+        BinaryOp::EQUAL_EQUAL | BinaryOp::BANG_EQUAL => (5, 6),
+        BinaryOp::LESS
+        | BinaryOp::LESS_EQUAL
+        | BinaryOp::GREATER
+        | BinaryOp::GREATER_EQUAL => (7, 8),
+        BinaryOp::PLUS | BinaryOp::MINUS => (9, 10),
+        BinaryOp::STAR | BinaryOp::SLASH => (11, 12),
     }
 }
 
@@ -36,7 +37,7 @@ pub struct Parser<'a> {
     peeked: Option<Token<'a>>,
 }
 
-pub fn parse(tokens: Vec<Token<'_>>) -> Result<Expr<'_>, ParserError<'_>> {
+pub fn parse(tokens: Vec<Token<'_>>) -> Result<Expr<'_>, ParserError> {
     Parser::new(tokens).parse(0)
 }
 
@@ -52,9 +53,7 @@ impl<'a> Parser<'a> {
         if self.peeked.is_some() {
             return self.peeked.take();
         }
-        self.tokens
-            .by_ref()
-            .find(|token| token.token_type != TT::COMMENT)
+        self.tokens.by_ref().find(|token| token.kind != TT::COMMENT)
     }
 
     fn peek(&mut self) -> Option<&Token<'a>> {
@@ -65,97 +64,79 @@ impl<'a> Parser<'a> {
     fn parse(
         &mut self,
         current_precedence: usize,
-    ) -> Result<Expr<'a>, ParserError<'a>> {
-        let mut lhs = self
-            .parse_prefix()
-            .wrap_err("Failed reading prefix".to_owned())?;
+    ) -> Result<Expr<'a>, ParserError> {
+        let mut lhs = self.parse_prefix()?;
 
-        while let Some(token) = self.peek() {
-            let token_type = token.token_type;
-
-            let Some((l_precedence, r_precedence)) =
-                infix_precedence(token_type)
-            else {
-                break;
-            };
-
+        while let Some(infix) = self
+            .peek()
+            .and_then(|token| BinaryOp::try_from(token.kind).ok())
+        {
+            let (l_precedence, r_precedence) = infix_precedence(infix);
             if l_precedence < current_precedence {
                 break;
             }
-            self.next();
-            let rhs = self.parse(r_precedence).wrap_err(
-                format!("Failed reading rhs for {token_type:?}").to_owned(),
-            )?;
-            lhs = Expr::Binary {
-                left: Box::new(lhs),
-                operator: token_type,
-                right: Box::new(rhs),
-            };
+            let token = self.next().expect("Retriving a peeked value");
+            let rhs = self.parse(r_precedence).wrap_err_with(|| {
+                format!("Failed reading rhs for {token:?}")
+            })?;
+            lhs = Expr::new_binary(
+                Box::new(lhs),
+                infix,
+                Box::new(rhs),
+                token.line,
+            );
         }
         Ok(lhs)
     }
 
-    pub fn parse_prefix(&mut self) -> Result<Expr<'a>, ParserError<'a>> {
+    pub fn parse_prefix(&mut self) -> Result<Expr<'a>, ParserError> {
         let token = self.next().ok_or(ParserError::UnexpectedEOF)?;
 
         if let Some(token_value) = token.token_value {
-            return Ok(match token_value {
-                VT::String(text) => {
-                    Expr::Literal(Value::String(text.to_owned()))
-                }
-                VT::Number(number) => Expr::Literal(Value::Number(number)),
-                VT::False => Expr::Literal(Value::Boolean(false)),
-                VT::True => Expr::Literal(Value::Boolean(true)),
-                VT::Nil => Expr::Literal(Value::Nil),
-                VT::Identifier(name) => Expr::Identifier(name),
-                VT::Comment(..) => {
-                    unreachable!("Shouldn't be emitted")
-                }
-            });
+            return Ok(build_value(token_value, token.line));
         }
 
-        match token.token_type {
-            TT::BANG => self.build_unary(UnaryOperator::BANG),
-            TT::MINUS => self.build_unary(UnaryOperator::MINUS),
-            TT::LEFT_PAREN => self.build_group(),
-            _ => Err(ParserError::UnexpectedToken {
-                token: Some(token),
-                expected_token_types: &[TT::BANG, TT::MINUS, TT::LEFT_PAREN],
-            }),
+        if let Ok(unary_op) = UnaryOperator::try_from(token.kind) {
+            return self.build_unary(unary_op, token.line);
         }
+
+        if token.kind == TT::LEFT_PAREN {
+            return self.build_group();
+        }
+
+        Err(ParserError::unexpected_token(
+            &token,
+            &[TT::BANG, TT::MINUS, TT::LEFT_PAREN],
+        ))
     }
 
     fn build_unary(
         &mut self,
-        unary_op: UnaryOperator,
-    ) -> Result<Expr<'a>, ParserError<'a>> {
-        let precedence = prefix_precedence(unary_op);
+        operator: UnaryOperator,
+        line: usize,
+    ) -> Result<Expr<'a>, ParserError> {
+        let precedence = prefix_precedence(operator);
         let expr = Box::new(self.parse(precedence)?);
-        Ok(Expr::Unary {
-            operator: unary_op,
-            expr,
-        })
+        Ok(Expr::new_unary(operator, expr, line))
     }
 
-    fn build_group(&mut self) -> Result<Expr<'a>, ParserError<'a>> {
+    fn build_group(&mut self) -> Result<Expr<'a>, ParserError> {
         let inner = self.parse(0)?;
-        let token = self.next().ok_or(ParserError::UnexpectedToken {
-            token: None,
-            expected_token_types: &[TT::RIGHT_PAREN],
-        })?;
+        let token = self
+            .next()
+            .ok_or_else(|| ParserError::expected_token(&[TT::RIGHT_PAREN]))?;
 
-        match token.token_type {
-            TT::RIGHT_PAREN => Ok(Expr::Grouping(Box::new(inner))),
-            _ => Err(ParserError::UnexpectedToken {
-                token: Some(token),
-                expected_token_types: &[TT::RIGHT_PAREN],
-            }),
+        match token.kind {
+            TT::RIGHT_PAREN => {
+                Ok(Expr::new_grouping(Box::new(inner), token.line))
+            }
+            _ => Err(ParserError::unexpected_token(&token, &[TT::RIGHT_PAREN])),
         }
     }
 
     fn syncronise(tokens: &mut Peekable<IntoIter<Token<'_>>>) {
         while let Some(token) = tokens.next() {
-            if token.token_type == TT::SEMICOLON {
+            if token.kind == TT::SEMICOLON {
                 break;
             }
             if tokens.peek().is_some_and(|next_token| {
@@ -168,10 +149,26 @@ impl<'a> Parser<'a> {
                     TT::PRINT,
                     TT::RETURN,
                 ]
-                .contains(&next_token.token_type)
+                .contains(&next_token.kind)
             }) {
                 break;
             }
+        }
+    }
+}
+
+fn build_value(value: TV, line: usize) -> Expr {
+    match value {
+        TV::String(text) => {
+            Expr::new_literal(Value::String(text.to_owned()), line)
+        }
+        TV::Number(number) => Expr::new_literal(Value::Number(number), line),
+        TV::False => Expr::new_literal(Value::Boolean(false), line),
+        TV::True => Expr::new_literal(Value::Boolean(true), line),
+        TV::Nil => Expr::new_literal(Value::Nil, line),
+        TV::Identifier(name) => Expr::new_identifier(name, line),
+        TV::Comment(..) => {
+            unreachable!("Shouldn't be emitted")
         }
     }
 }

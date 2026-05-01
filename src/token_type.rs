@@ -56,7 +56,6 @@ pub enum TokenType {
     WHILE,
 
     COMMENT,
-    EOF,
 }
 
 #[allow(clippy::enum_glob_use, reason = "Too many enum groups")]
@@ -132,8 +131,6 @@ impl Display for TokenType {
             TRUE => "true",
             VAR => "var",
             WHILE => "while",
-
-            EOF => "EOF",
         };
         write!(f, "{output}")
     }
@@ -144,3 +141,28 @@ impl Debug for TokenType {
         Display::fmt(self, f)
     }
 }
+
+macro_rules! operator_subset {
+    ($name:ident, { $($variant:ident),* $(,)? }) => {
+        #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+        #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
+        pub enum $name { $($variant),* }
+
+        impl TryFrom<TokenType> for $name {
+            type Error = ();
+            fn try_from(tt: TokenType) -> Result<Self, ()> {
+                match tt {
+                    $(TokenType::$variant => Ok(Self::$variant),)*
+                    _ => Err(()),
+                }
+            }
+        }
+
+        impl Display for $name {
+            fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+                match self { $(Self::$variant => TokenType::$variant.fmt(f)),* }
+            }
+        }
+    };
+}
+pub(crate) use operator_subset;
