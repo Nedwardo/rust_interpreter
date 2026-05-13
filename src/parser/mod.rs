@@ -1,8 +1,6 @@
 pub mod parser_error;
 use crate::expressions::BinaryOperator as BinaryOp;
-use crate::expressions::Expr;
-use crate::expressions::UnaryOperator;
-use crate::expressions::Value;
+use crate::expressions::{Expr, Statment, UnaryOperator, Valua};
 use crate::parser::parser_error::ParserError;
 use crate::parser::parser_error::WrapErr;
 use crate::token::Token;
@@ -37,8 +35,10 @@ pub struct Parser<'a> {
     peeked: Option<Token<'a>>,
 }
 
-pub fn parse(tokens: Vec<Token<'_>>) -> Result<Expr<'_>, ParserError> {
-    Parser::new(tokens).parse(0)
+pub fn parse<'a>(
+    tokens: Vec<Token<'a>>,
+) -> Result<Vec<Statment<'a>>, ParserError> {
+    Parser::new(tokens).parse()
 }
 
 impl<'a> Parser<'a> {
@@ -61,7 +61,29 @@ impl<'a> Parser<'a> {
         self.peeked.as_ref()
     }
 
-    fn parse(
+    fn parse(&mut self) -> Result<Vec<Statment<'a>>, ParserError> {
+        let mut statments = Vec::new();
+        while let Some(next_token) = self.peek() {
+            if next_token.kind == TT::PRINT {
+                self.next();
+                statments.push(Statment::Print(self.expression(0)?));
+            } else {
+                statments.push(Statment::Expression(self.expression(0)?));
+            }
+
+            if let Some(token) = self.next()
+                && token.kind != TT::SEMICOLON
+            {
+                return Err(ParserError::unexpected_token(
+                    &token,
+                    &[TT::SEMICOLON],
+                ));
+            }
+        }
+        Ok(statments)
+    }
+
+    fn expression(
         &mut self,
         current_precedence: usize,
     ) -> Result<Expr<'a>, ParserError> {
@@ -76,7 +98,7 @@ impl<'a> Parser<'a> {
                 break;
             }
             let token = self.next().expect("Retriving a peeked value");
-            let rhs = self.parse(r_precedence).wrap_err_with(|| {
+            let rhs = self.expression(r_precedence).wrap_err_with(|| {
                 format!("Failed reading rhs for {token:?}")
             })?;
             lhs = Expr::new_binary(
@@ -116,12 +138,12 @@ impl<'a> Parser<'a> {
         line: usize,
     ) -> Result<Expr<'a>, ParserError> {
         let precedence = prefix_precedence(operator);
-        let expr = Box::new(self.parse(precedence)?);
+        let expr = Box::new(self.expression(precedence)?);
         Ok(Expr::new_unary(operator, expr, line))
     }
 
     fn build_group(&mut self) -> Result<Expr<'a>, ParserError> {
-        let inner = self.parse(0)?;
+        let inner = self.expression(0)?;
         let token = self
             .next()
             .ok_or_else(|| ParserError::expected_token(&[TT::RIGHT_PAREN]))?;
@@ -160,12 +182,12 @@ impl<'a> Parser<'a> {
 fn build_value(value: TV, line: usize) -> Expr {
     match value {
         TV::String(text) => {
-            Expr::new_literal(Value::String(text.to_owned()), line)
+            Expr::new_literal(Valua::String(text.to_owned()), line)
         }
-        TV::Number(number) => Expr::new_literal(Value::Number(number), line),
-        TV::False => Expr::new_literal(Value::Boolean(false), line),
-        TV::True => Expr::new_literal(Value::Boolean(true), line),
-        TV::Nil => Expr::new_literal(Value::Nil, line),
+        TV::Number(number) => Expr::new_literal(Valua::Number(number), line),
+        TV::False => Expr::new_literal(Valua::Boolean(false), line),
+        TV::True => Expr::new_literal(Valua::Boolean(true), line),
+        TV::Nil => Expr::new_literal(Valua::Nil, line),
         TV::Identifier(name) => Expr::new_identifier(name, line),
         TV::Comment(..) => {
             unreachable!("Shouldn't be emitted")

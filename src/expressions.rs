@@ -3,6 +3,11 @@ use crate::token_type::operator_subset;
 use std::fmt;
 use std::fmt::{Display, Formatter, Write};
 
+pub enum Statment<'a> {
+    Expression(Expr<'a>),
+    Print(Expr<'a>),
+}
+
 pub struct Expr<'a> {
     pub line: usize,
     pub kind: ExprKind<'a>,
