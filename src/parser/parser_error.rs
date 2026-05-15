@@ -95,7 +95,7 @@ impl Display for ParserError {
                 error_message,
                 source,
             } => {
-                write!(f, "{error_message}\n{source}",)
+                write!(f, "{error_message}\n{source}")
             }
             Self::UnexpectedEOF => {
                 write!(f, "Unexpected EOF")

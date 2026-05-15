@@ -4,6 +4,7 @@ use std::fmt;
 use std::fmt::{Display, Formatter, Write};
 
 pub enum Statment<'a> {
+    Declaration{name: &'a str, expression: Option<Expr<'a>>},
     Expression(Expr<'a>),
     Print(Expr<'a>),
 }

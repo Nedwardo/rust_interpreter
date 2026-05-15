@@ -58,9 +58,7 @@ fn run(file: &str) -> Result<(), Box<dyn Error>> {
 
     let expression = parse(tokens).map_err(Box::new)?;
 
-    let result = interpret(&expression)?;
-
-    println!("{result}");
+    interpret(&expression)?;
 
     Ok(())
 }
