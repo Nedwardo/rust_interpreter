@@ -1,7 +1,7 @@
 pub mod parser_error;
 use crate::expressions::BinaryOperator as BinaryOp;
 use crate::expressions::{Expr, Statment, UnaryOperator, Value};
-use crate::parser::parser_error::{WrapErr, ParserError};
+use crate::parser::parser_error::{ParserError, WrapErr};
 use crate::token::Token;
 use crate::token::TokenValue as TV;
 use crate::token_type::TokenType as TT;
@@ -64,18 +64,18 @@ impl<'a> Parser<'a> {
             let statment = if next_token.kind == TT::VAR {
                 self.next();
                 self.declaration()
-            }
-            else if next_token.kind == TT::PRINT {
+            } else if next_token.kind == TT::PRINT {
                 self.next();
                 self.expression(0).map(Statment::Print)
             } else {
                 self.expression(0).map(Statment::Expression)
             };
-            statments.push(statment);
 
-            if let Err(err) = statment {
+            if let Err(_) = statment {
                 self.synchronise();
             }
+
+            statments.push(statment);
 
             if let Some(token) = self.next()
                 && token.kind != TT::SEMICOLON
@@ -84,7 +84,7 @@ impl<'a> Parser<'a> {
                     &token,
                     &[TT::SEMICOLON],
                 )));
-                self.syncronise();
+                self.synchronise();
             }
         }
         statments
@@ -94,17 +94,24 @@ impl<'a> Parser<'a> {
         let token = self.next().ok_or(ParserError::UnexpectedEOF)?;
         let name = match token.token_value {
             Some(TV::Identifier(name)) => Ok(name),
-            _ => Err(ParserError::unexpected_token(&token, &[TT::IDENTIFIER]))
+            _ => Err(ParserError::unexpected_token(&token, &[TT::IDENTIFIER])),
         }?;
 
-        if let Some(next_token) = self.peek() && next_token.kind == TT::EQUAL {
+        if let Some(next_token) = self.peek()
+            && next_token.kind == TT::EQUAL
+        {
             self.next();
             let value = self.expression(0)?;
-            Ok(Statment::Declaration{name, expression: Some(value)})
+            Ok(Statment::Declaration {
+                name,
+                expression: Some(value),
+            })
         } else {
-            Ok(Statment::Declaration{name, expression: None})
+            Ok(Statment::Declaration {
+                name,
+                expression: None,
+            })
         }
-
     }
 
     fn expression(
@@ -180,12 +187,12 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn syncronise(tokens: &mut Peekable<IntoIter<Token<'_>>>) {
-        while let Some(token) = tokens.next() {
+    fn synchronise(&mut self) {
+        while let Some(token) = self.next() {
             if token.kind == TT::SEMICOLON {
                 break;
             }
-            if tokens.peek().is_some_and(|next_token| {
+            if self.peek().is_some_and(|next_token| {
                 [
                     TT::CLASS,
                     TT::FUN,

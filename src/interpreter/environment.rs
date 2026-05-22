@@ -1,22 +1,25 @@
 use crate::expressions::Value;
+use std::collections::HashMap;
 
-pub struct Environment {
-    enclosing: Option<&Environment>,
-    values: Map<&str, Value>
+pub struct Environment<'a> {
+    enclosing: Option<&'a Environment<'a>>,
+    values: HashMap<&'a str, Option<Box<Value>>>,
 }
 
-pub impl Environment {
-    fn new(enclosing: Option<&Environment>) -> Self{
-        Environment{
-            enclosing, values: HashMap::new();
-            }
+impl<'a> Environment<'a> {
+    pub fn new(enclosing: Option<&'a Environment<'a>>) -> Self {
+        Environment {
+            enclosing,
+            values: HashMap::new(),
         }
-
-    fn define(&mut self, name: &str, value: Value) {
-        self.values[name] = value;
     }
 
-    fn get(&self, name: &str) -> Option<&Value> {
+    pub fn define(&mut self, name: &'a str, value: Option<Box<Value>>) {
+        self.values.insert(name, value);
+    }
+
+    pub fn get(&self, name: &str) -> Option<&Option<Box<Value>>> {
         return self.values.get(name);
     }
 }
+

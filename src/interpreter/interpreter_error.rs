@@ -5,7 +5,7 @@ use std::fmt::{Display, Formatter};
 use crate::expressions::{BinaryOperator, UnaryOperator};
 
 #[derive(Debug, Clone)]
-pub enum InterpreterError {
+pub enum InterpreterError<'a> {
     UnsupportedBinaryOperand {
         lhs_type: &'static str,
         operator: BinaryOperator,
@@ -17,9 +17,13 @@ pub enum InterpreterError {
         expr_type: &'static str,
         line: usize,
     },
+    UndefinedVariable {
+        name: &'a str,
+        line: usize,
+    },
 }
 
-impl Display for InterpreterError {
+impl<'a> Display for InterpreterError<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Self::UnsupportedBinaryOperand {
@@ -39,8 +43,12 @@ impl Display for InterpreterError {
                 f,
                 "Line {line}\n Interpreter Error: Bad operand type for unary {operator}: '{expr_type}'"
             ),
+            Self::UndefinedVariable { name, line } => write!(
+                f,
+                "Line {line}\n Interpreter Error: Variable {name} is not defined"
+            ),
         }
     }
 }
 
-impl Error for InterpreterError {}
+impl<'a> Error for InterpreterError<'a> {}

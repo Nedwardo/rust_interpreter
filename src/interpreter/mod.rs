@@ -1,6 +1,7 @@
-pub mod interpreter_error;
 mod environment;
+pub mod interpreter_error;
 
+use crate::interpreter::environment::Environment;
 use crate::interpreter::interpreter_error::InterpreterError;
 use crate::interpreter::interpreter_error::InterpreterError::{
     UnsupportedBinaryOperand, UnsupportedUnaryOperand,
@@ -10,21 +11,22 @@ use crate::expressions::Statment;
 use crate::expressions::{Binary, ExprKind, Unary, Value};
 use crate::expressions::{BinaryOperator, Expr, UnaryOperator};
 
-
-pub fn interpret(
-    statments: &Vec<Statment<'_>>,
-) -> Result<(), InterpreterError> {
+pub fn interpret<'a>(
+    statments: &'a Vec<Statment<'a>>,
+) -> Result<(), InterpreterError<'a>> {
+    let mut env = Environment::new(None);
     for statment in statments {
         match statment {
             Statment::Expression(expr) => {
                 let _ = visit(expr)?;
-            },
+            }
             Statment::Print(expr) => {
                 println!("{}", visit(expr)?);
-            },
-            Statment::Declaration { name, expression } => {
-                todo!()
             }
+            Statment::Declaration { name, expression } => match expression {
+                Some(expr) => env.define(name, Some(visit(expr)?)),
+                None => env.define(name, None),
+            },
         }
     }
     Ok(())
@@ -44,10 +46,10 @@ fn get_identifier(name: &'_ str) -> Result<Box<Value>, InterpreterError> {
     todo!()
 }
 
-fn visit_unary(
-    unary: &Unary,
+fn visit_unary<'a>(
+    unary: &'a Unary,
     line: usize,
-) -> Result<Box<Value>, InterpreterError> {
+) -> Result<Box<Value>, InterpreterError<'a>> {
     let value = visit(&unary.expr)?;
 
     match unary.operator {
@@ -67,10 +69,10 @@ fn visit_unary(
     clippy::string_add,
     reason = "Do not want to modify the original string inplace"
 )]
-fn visit_binary(
-    binary: &Binary,
+fn visit_binary<'a>(
+    binary: &'a Binary,
     line: usize,
-) -> Result<Box<Value>, InterpreterError> {
+) -> Result<Box<Value>, InterpreterError<'a>> {
     let left_value = visit(&binary.left)?;
     let right_value = visit(&binary.right)?;
 
