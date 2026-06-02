@@ -1,14 +1,14 @@
+mod error_utils;
+mod evaluator;
 mod expressions;
-mod interpreter;
 mod parser;
 mod read_file_error;
 mod scanner;
 mod token;
+use crate::error_utils::FlattenedError;
+use crate::parser::parse;
 mod token_type;
-use crate::expressions::Statment;
-use crate::interpreter::interpret;
-use crate::parser::parser_error::ParserError;
-use parser::parse;
+use crate::evaluator::evaluate;
 use read_file_error::ReadFileError;
 use scanner::scan;
 use std::env::args;
@@ -57,13 +57,8 @@ fn run_prompt() -> Result<(), Box<dyn Error>> {
 
 fn run(file: &str) -> Result<(), Box<dyn Error>> {
     let tokens = scan(file).map_err(Box::new)?;
-    let expressions = parse(tokens);
-
-    for token in tokens {
-        expressions.push(parse(token))
-    }
-
-    interpret(&expressions)?;
-
-    Ok(())
+    let statments = parse(tokens)
+        .map_err(|err| Box::new(FlattenedError::flatten(err, file)))?;
+    Ok(evaluate(&statments)
+        .map_err(|err| Box::new(FlattenedError::flatten(err, file)))?)
 }

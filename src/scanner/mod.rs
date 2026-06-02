@@ -1,12 +1,13 @@
 mod scanner_error;
+use crate::error_utils::FlattenedError;
 use crate::token::Token;
 use crate::token::TokenValue as TV;
 use crate::token_type::TokenType;
 use crate::token_type::TokenType as TT;
 use core::str::Chars;
-use scanner_error::{ScannerError, ScannerErrors};
+use scanner_error::ScannerError;
 
-pub fn scan(source: &'_ str) -> Result<Vec<Token<'_>>, ScannerErrors> {
+pub fn scan(source: &'_ str) -> Result<Vec<Token<'_>>, FlattenedError> {
     Scanner::new(source).scan_tokens()
 }
 
@@ -32,7 +33,7 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn scan_tokens(&mut self) -> Result<Vec<Token<'a>>, ScannerErrors> {
+    fn scan_tokens(&mut self) -> Result<Vec<Token<'a>>, FlattenedError> {
         let mut tokens = Vec::new();
         let mut errors = Vec::new();
         while let Some(character) = self.iter.first() {
@@ -47,7 +48,7 @@ impl<'a> Scanner<'a> {
         if errors.is_empty() {
             Ok(tokens)
         } else {
-            Err(ScannerErrors::new(errors, self.iter.source))
+            Err(FlattenedError::flatten(errors, self.iter.source))
         }
     }
 

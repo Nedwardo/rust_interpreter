@@ -1,38 +1,49 @@
 mod environment;
-pub mod interpreter_error;
+pub mod evaluation_error;
 
-use crate::interpreter::environment::Environment;
-use crate::interpreter::interpreter_error::InterpreterError;
-use crate::interpreter::interpreter_error::InterpreterError::{
+use crate::evaluator::environment::Environment;
+use crate::evaluator::evaluation_error::EvaluationError;
+use crate::evaluator::evaluation_error::EvaluationError::{
     UnsupportedBinaryOperand, UnsupportedUnaryOperand,
 };
 
+use crate::error_utils::StageError;
 use crate::expressions::Statment;
 use crate::expressions::{Binary, ExprKind, Unary, Value};
 use crate::expressions::{BinaryOperator, Expr, UnaryOperator};
 
-pub fn interpret<'a>(
+pub fn evaluate<'a>(
     statments: &'a Vec<Statment<'a>>,
-) -> Result<(), InterpreterError<'a>> {
+) -> Result<(), Vec<impl Into<StageError<'a>>>> {
     let mut env = Environment::new(None);
+    let mut errors = Vec::new();
     for statment in statments {
         match statment {
             Statment::Expression(expr) => {
-                let _ = visit(expr)?;
+                if let Err(e) = visit(expr) {
+                    errors.push(e);
+                }
             }
-            Statment::Print(expr) => {
-                println!("{}", visit(expr)?);
-            }
+            Statment::Print(expr) => match visit(expr) {
+                Ok(value) => println!("{value}"),
+                Err(e) => errors.push(e),
+            },
             Statment::Declaration { name, expression } => match expression {
-                Some(expr) => env.define(name, Some(visit(expr)?)),
+                Some(expr) => match visit(expr) {
+                    Ok(value) => env.define(name, Some(value)),
+                    Err(e) => errors.push(e),
+                },
                 None => env.define(name, None),
             },
         }
     }
+    if !errors.is_empty() {
+        return Err(errors);
+    }
     Ok(())
 }
 
-fn visit<'a>(expr: &'a Expr<'a>) -> Result<Box<Value>, InterpreterError> {
+fn visit<'a>(expr: &'a Expr<'a>) -> Result<Box<Value>, EvaluationError<'a>> {
     match &expr.kind {
         ExprKind::Literal(value) => Ok(Box::new(value.clone())),
         ExprKind::Identifier(name) => get_identifier(name),
@@ -42,14 +53,14 @@ fn visit<'a>(expr: &'a Expr<'a>) -> Result<Box<Value>, InterpreterError> {
     }
 }
 
-fn get_identifier(name: &'_ str) -> Result<Box<Value>, InterpreterError> {
+fn get_identifier(name: &'_ str) -> Result<Box<Value>, EvaluationError<'_>> {
     todo!()
 }
 
 fn visit_unary<'a>(
     unary: &'a Unary,
     line: usize,
-) -> Result<Box<Value>, InterpreterError<'a>> {
+) -> Result<Box<Value>, EvaluationError<'a>> {
     let value = visit(&unary.expr)?;
 
     match unary.operator {
@@ -72,7 +83,7 @@ fn visit_unary<'a>(
 fn visit_binary<'a>(
     binary: &'a Binary,
     line: usize,
-) -> Result<Box<Value>, InterpreterError<'a>> {
+) -> Result<Box<Value>, EvaluationError<'a>> {
     let left_value = visit(&binary.left)?;
     let right_value = visit(&binary.right)?;
 

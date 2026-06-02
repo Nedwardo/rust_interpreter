@@ -1,11 +1,11 @@
 pub mod parser_error;
+use crate::error_utils::StageError;
 use crate::expressions::BinaryOperator as BinaryOp;
 use crate::expressions::{Expr, Statment, UnaryOperator, Value};
 use crate::parser::parser_error::{ParserError, WrapErr};
 use crate::token::Token;
 use crate::token::TokenValue as TV;
 use crate::token_type::TokenType as TT;
-use std::iter::Peekable;
 use std::vec::IntoIter;
 use std::vec::Vec;
 
@@ -34,7 +34,9 @@ pub struct Parser<'a> {
     peeked: Option<Token<'a>>,
 }
 
-pub fn parse(tokens: Vec<Token>) -> Vec<Result<Statment, ParserError>> {
+pub fn parse(
+    tokens: Vec<Token>,
+) -> Result<Vec<Statment>, Vec<impl Into<StageError>>> {
     Parser::new(tokens).parse()
 }
 
@@ -58,8 +60,9 @@ impl<'a> Parser<'a> {
         self.peeked.as_ref()
     }
 
-    fn parse(&mut self) -> Vec<Result<Statment<'a>, ParserError>> {
+    fn parse(&mut self) -> Result<Vec<Statment<'a>>, Vec<ParserError>> {
         let mut statments = Vec::new();
+        let mut errors = Vec::new();
         while let Some(next_token) = self.peek() {
             let statment = if next_token.kind == TT::VAR {
                 self.next();
@@ -71,23 +74,30 @@ impl<'a> Parser<'a> {
                 self.expression(0).map(Statment::Expression)
             };
 
-            if let Err(_) = statment {
+            if statment.is_err() {
                 self.synchronise();
             }
 
-            statments.push(statment);
+            match statment {
+                Ok(s) => statments.push(s),
+                Err(e) => errors.push(e),
+            }
 
             if let Some(token) = self.next()
                 && token.kind != TT::SEMICOLON
             {
-                statments.push(Err(ParserError::unexpected_token(
+                errors.push(ParserError::unexpected_token(
                     &token,
                     &[TT::SEMICOLON],
-                )));
+                ));
                 self.synchronise();
             }
         }
-        statments
+
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+        Ok(statments)
     }
 
     fn declaration(&mut self) -> Result<Statment<'a>, ParserError> {

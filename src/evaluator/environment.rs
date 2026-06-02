@@ -2,12 +2,12 @@ use crate::expressions::Value;
 use std::collections::HashMap;
 
 pub struct Environment<'a> {
-    enclosing: Option<&'a Environment<'a>>,
+    enclosing: Option<&'a Self>,
     values: HashMap<&'a str, Option<Box<Value>>>,
 }
 
 impl<'a> Environment<'a> {
-    pub fn new(enclosing: Option<&'a Environment<'a>>) -> Self {
+    pub fn new(enclosing: Option<&'a Self>) -> Self {
         Environment {
             enclosing,
             values: HashMap::new(),
@@ -19,7 +19,6 @@ impl<'a> Environment<'a> {
     }
 
     pub fn get(&self, name: &str) -> Option<&Option<Box<Value>>> {
-        return self.values.get(name);
+        self.values.get(name)
     }
 }
-
