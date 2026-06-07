@@ -1,7 +1,8 @@
 pub mod parser_error;
 use crate::error_utils::StageError;
 use crate::expressions::BinaryOperator as BinaryOp;
-use crate::expressions::{Expr, Statment, UnaryOperator, Value};
+use crate::expressions::ExprKind;
+use crate::expressions::{Assignment, Expr, Statment, UnaryOperator, Value};
 use crate::parser::parser_error::{ParserError, WrapErr};
 use crate::token::Token;
 use crate::token::TokenValue as TV;
@@ -29,6 +30,7 @@ pub const fn infix_precedence(token_type: BinaryOp) -> (usize, usize) {
     }
 }
 
+#[derive(Debug)]
 pub struct Parser<'a> {
     tokens: IntoIter<Token<'a>>,
     peeked: Option<Token<'a>>,
@@ -56,41 +58,27 @@ impl<'a> Parser<'a> {
     }
 
     fn peek(&mut self) -> Option<&Token<'a>> {
-        self.peeked = self.next();
+        if self.peeked.is_none() {
+            self.peeked = self.next();
+        }
         self.peeked.as_ref()
     }
 
     fn parse(&mut self) -> Result<Vec<Statment<'a>>, Vec<ParserError>> {
         let mut statments = Vec::new();
         let mut errors = Vec::new();
-        while let Some(next_token) = self.peek() {
-            let statment = if next_token.kind == TT::VAR {
+        while let Some(token) = self.peek() {
+            if token.kind == TT::LEFT_BRACE {
                 self.next();
-                self.declaration()
-            } else if next_token.kind == TT::PRINT {
-                self.next();
-                self.expression(0).map(Statment::Print)
+                match self.block() {
+                    Ok(statment) => statments.push(statment),
+                    Err(e) => errors.extend(e),
+                }
             } else {
-                self.expression(0).map(Statment::Expression)
-            };
-
-            if statment.is_err() {
-                self.synchronise();
-            }
-
-            match statment {
-                Ok(s) => statments.push(s),
-                Err(e) => errors.push(e),
-            }
-
-            if let Some(token) = self.next()
-                && token.kind != TT::SEMICOLON
-            {
-                errors.push(ParserError::unexpected_token(
-                    &token,
-                    &[TT::SEMICOLON],
-                ));
-                self.synchronise();
+                match self.statment() {
+                    Ok(statment) => statments.push(statment),
+                    Err(e) => errors.push(e),
+                }
             }
         }
 
@@ -100,31 +88,110 @@ impl<'a> Parser<'a> {
         Ok(statments)
     }
 
-    fn declaration(&mut self) -> Result<Statment<'a>, ParserError> {
-        let token = self.next().ok_or(ParserError::UnexpectedEOF)?;
-        let name = match token.token_value {
-            Some(TV::Identifier(name)) => Ok(name),
-            _ => Err(ParserError::unexpected_token(&token, &[TT::IDENTIFIER])),
-        }?;
-
-        if let Some(next_token) = self.peek()
-            && next_token.kind == TT::EQUAL
+    fn block(&mut self) -> Result<Statment<'a>, Vec<ParserError>> {
+        let mut members = Vec::new();
+        let mut errors = Vec::new();
+        while let Some(next_token) = self.peek()
+            && next_token.kind != TT::RIGHT_BRACE
         {
-            self.next();
-            let value = self.expression(0)?;
-            Ok(Statment::Declaration {
-                name,
-                expression: Some(value),
-            })
+            let statment = if next_token.kind == TT::LEFT_BRACE {
+                self.block()
+                    .wrap_err_with(|| "Failed generating block".to_owned())
+            } else {
+                self.statment()
+                    .wrap_err_with(|| "Failed generating block".to_owned())
+            };
+            match statment {
+                Ok(s) => members.push(s),
+                Err(e) => {
+                    self.synchronise();
+                    errors.push(e);
+                }
+            }
+        }
+        if let Some(token) = self.next() {
+            if token.kind != TT::RIGHT_BRACE {
+                errors.push(ParserError::unexpected_token(
+                    &token,
+                    &[TT::RIGHT_BRACE],
+                ));
+            }
         } else {
-            Ok(Statment::Declaration {
-                name,
-                expression: None,
-            })
+            errors.push(ParserError::expected_token(&[TT::RIGHT_BRACE]));
+        }
+
+        if !errors.is_empty() {
+            return Err(errors);
+        }
+        Ok(Statment::Group(members))
+    }
+
+    fn statment(&mut self) -> Result<Statment<'a>, ParserError> {
+        let next_token = self.peek().ok_or(ParserError::UnexpectedEOF)?;
+        let statment = if next_token.kind == TT::VAR {
+            self.next();
+            self.declaration()?
+        } else if next_token.kind == TT::PRINT {
+            self.next();
+            self.expression(0).map(Statment::Print)?
+        } else {
+            self.expression(0).map(Statment::Expression)?
+        };
+        if let Some(token) = self.peek()
+            && token.kind != TT::SEMICOLON
+        {
+            Err(ParserError::unexpected_token(token, &[TT::SEMICOLON]))
+        } else {
+            self.next();
+            Ok(statment)
         }
     }
 
+    fn declaration(&mut self) -> Result<Statment<'a>, ParserError> {
+        let expr = self.expression(0)?;
+        if let ExprKind::Assignment(Assignment { name, expr }) = expr.kind {
+            return Ok(Statment::Declaration {
+                name,
+                expression: Some(*expr),
+            });
+        } else if let ExprKind::Identifier(name) = expr.kind {
+            return Ok(Statment::Declaration {
+                name,
+                expression: None,
+            });
+        }
+
+        Err(ParserError::UnexpectedEOF)
+    }
+
     fn expression(
+        &mut self,
+        current_precedence: usize,
+    ) -> Result<Expr<'a>, ParserError> {
+        let lhs = self.build_binary(current_precedence)?;
+
+        if let Some(infix) = self.peek()
+            && infix.kind == TT::EQUAL
+        {
+            let token = self.next().expect("Retriving a peeked value");
+            let rhs = self.expression(current_precedence)?;
+
+            if let ExprKind::Identifier(name) = lhs.kind {
+                return Ok(Expr::new_assignment(
+                    name,
+                    Box::new(rhs),
+                    token.line,
+                ));
+            }
+            return Err(ParserError::InvalidAssignmentTarget {
+                line: token.line,
+            });
+        }
+
+        Ok(lhs)
+    }
+
+    pub fn build_binary(
         &mut self,
         current_precedence: usize,
     ) -> Result<Expr<'a>, ParserError> {
@@ -139,7 +206,7 @@ impl<'a> Parser<'a> {
                 break;
             }
             let token = self.next().expect("Retriving a peeked value");
-            let rhs = self.expression(r_precedence).wrap_err_with(|| {
+            let rhs = self.build_binary(r_precedence).wrap_err_with(|| {
                 format!("Failed reading rhs for {token:?}")
             })?;
             lhs = Expr::new_binary(

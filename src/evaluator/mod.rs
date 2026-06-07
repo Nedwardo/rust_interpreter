@@ -14,27 +14,45 @@ use crate::expressions::{BinaryOperator, Expr, UnaryOperator};
 
 pub fn evaluate<'a>(
     statments: &'a Vec<Statment<'a>>,
-) -> Result<(), Vec<impl Into<StageError>>> {
-    let mut env = Environment::new(None);
+) -> Result<(), Vec<impl Into<StageError> + use<'a>>> {
+    evaluate_statments(statments, &mut Environment::new())
+}
+
+fn evaluate_statments<'a>(
+    statments: &'a Vec<Statment<'a>>,
+    env: &mut Environment<'a>,
+) -> Result<(), Vec<impl Into<StageError> + use<'a>>> {
     let mut errors = Vec::new();
     for statment in statments {
         match statment {
             Statment::Expression(expr) => {
-                if let Err(e) = visit(expr, &env) {
+                if let Err(e) = visit(expr, env) {
                     errors.push(e);
                 }
             }
-            Statment::Print(expr) => match visit(expr, &env) {
+            Statment::Print(expr) => {
+                if let Err(e) = visit(expr, env) {
+                    errors.push(e);
+                }
+            }
+            Statment::Print(expr) => match visit(expr, env) {
                 Ok(value) => println!("{value}"),
                 Err(e) => errors.push(e),
             },
             Statment::Declaration { name, expression } => match expression {
-                Some(expr) => match visit(expr, &env) {
+                Some(expr) => match visit(expr, env) {
                     Ok(value) => env.define(name, Some(value)),
                     Err(e) => errors.push(e),
                 },
                 None => env.define(name, None),
             },
+            Statment::Group(s) => {
+                env.narrow();
+                if let Err(e) = evaluate_statments(s, env) {
+                    errors.extend(e.into_iter());
+                }
+                env.pop_scope();
+            }
         }
     }
     if !errors.is_empty() {
@@ -45,7 +63,7 @@ pub fn evaluate<'a>(
 
 fn visit<'a>(
     expr: &'a Expr<'a>,
-    env: &Environment,
+    env: &mut Environment<'a>,
 ) -> Result<Value, EvaluationError<'a>> {
     match &expr.kind {
         ExprKind::Literal(value) => Ok(value.clone()),
@@ -60,13 +78,23 @@ fn visit<'a>(
                     line: expr.line,
                 })
         }
+        ExprKind::Assignment(assignment) => {
+            let value = visit(&assignment.expr, env)?;
+            env.update(assignment.name, value.clone()).map_err(|()| {
+                EvaluationError::UndefinedVariable {
+                    name: assignment.name,
+                    line: expr.line,
+                }
+            })?;
+            Ok(value)
+        }
     }
 }
 
 fn visit_unary<'a>(
     unary: &'a Unary,
     line: usize,
-    env: &Environment,
+    env: &mut Environment<'a>,
 ) -> Result<Value, EvaluationError<'a>> {
     let value = visit(&unary.expr, env)?;
 
@@ -90,7 +118,7 @@ fn visit_unary<'a>(
 fn visit_binary<'a>(
     binary: &'a Binary,
     line: usize,
-    env: &Environment,
+    env: &mut Environment<'a>,
 ) -> Result<Value, EvaluationError<'a>> {
     let left_value = visit(&binary.left, env)?;
     let right_value = visit(&binary.right, env)?;

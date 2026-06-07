@@ -9,7 +9,7 @@ pub struct StageError {
     pub message: String,
     pub error_location: Option<String>,
     pub stage: &'static str,
-    pub child: Option<Box<Self>>,
+    pub children: Vec<Self>,
 }
 
 impl StageError {
@@ -35,14 +35,14 @@ impl StageError {
                 ).map_or_else(
                 || format!("Errored generating the error message for {self:?}\nCouldn't find {error_location:?} in {source_line:?}")
                 , |line_selection| format!(
-                    "Error during scanning: {}\n{}",
-                    self.message, line_selection
+                    "Error during {}: {}\n{}",
+                    self.stage, self.message, line_selection
                 )
                 )
             },
         )});
 
-        if let Some(error_source) = &self.child {
+        for error_source in &self.children {
             formatted_error_message.push('\n');
             formatted_error_message
                 .push_str(&error_source.generate_error_message(source_string));

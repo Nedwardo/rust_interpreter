@@ -10,22 +10,26 @@ pub enum Statment<'a> {
     },
     Expression(Expr<'a>),
     Print(Expr<'a>),
+    Group(Vec<Self>),
 }
 
+#[derive(Debug)]
 pub struct Expr<'a> {
     pub line: usize,
     pub kind: ExprKind<'a>,
 }
 
+#[derive(Debug)]
 pub enum ExprKind<'a> {
     Literal(Value),
     Identifier(&'a str),
     Unary(Unary<'a>),
     Grouping(Box<Expr<'a>>),
     Binary(Binary<'a>),
+    Assignment(Assignment<'a>),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Value {
     String(String),
     Number(f64),
@@ -33,11 +37,19 @@ pub enum Value {
     Nil,
 }
 
+#[derive(Debug)]
+pub struct Assignment<'a> {
+    pub name: &'a str,
+    pub expr: Box<Expr<'a>>,
+}
+
+#[derive(Debug)]
 pub struct Unary<'a> {
     pub operator: UnaryOperator,
     pub expr: Box<Expr<'a>>,
 }
 
+#[derive(Debug)]
 pub struct Binary<'a> {
     pub left: Box<Expr<'a>>,
     pub operator: BinaryOperator,
@@ -107,6 +119,17 @@ impl<'a> Expr<'a> {
         Expr {
             line,
             kind: ExprKind::Grouping(grouping),
+        }
+    }
+
+    pub const fn new_assignment(
+        name: &'a str,
+        expr: Box<Self>,
+        line: usize,
+    ) -> Self {
+        Expr {
+            line,
+            kind: ExprKind::Assignment(Assignment { name, expr }),
         }
     }
 }

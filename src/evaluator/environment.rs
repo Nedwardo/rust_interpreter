@@ -2,23 +2,49 @@ use crate::expressions::Value;
 use std::collections::HashMap;
 
 pub struct Environment<'a> {
-    enclosing: Option<&'a Self>,
-    values: HashMap<&'a str, Value>,
+    scopes: Vec<HashMap<&'a str, Value>>,
 }
 
 impl<'a> Environment<'a> {
-    pub fn new(enclosing: Option<&'a Self>) -> Self {
+    pub fn new() -> Self {
         Environment {
-            enclosing,
-            values: HashMap::new(),
+            scopes: vec![HashMap::new()],
         }
     }
 
+    pub fn narrow(&mut self) {
+        self.scopes.push(HashMap::new());
+    }
+
+    pub fn pop_scope(&mut self) {
+        self.scopes.pop();
+    }
+
     pub fn define(&mut self, name: &'a str, value: Option<Value>) {
-        self.values.insert(name, value.unwrap_or(Value::Nil));
+        self.scopes
+            .last_mut()
+            .expect("One hashmap should be initalised at all times")
+            .insert(name, value.unwrap_or(Value::Nil));
+    }
+
+    pub fn update(&mut self, name: &'a str, value: Value) -> Result<(), ()> {
+        for scope in self.scopes.iter_mut().rev() {
+            eprintln!("Checking scope");
+            if scope.contains_key(name) {
+                eprintln!("Found");
+                scope.insert(name, value);
+                return Ok(());
+            }
+        }
+        Err(())
     }
 
     pub fn get(&self, name: &str) -> Option<&Value> {
-        self.values.get(name)
+        for scope in self.scopes.iter().rev() {
+            if scope.contains_key(name) {
+                return scope.get(name);
+            }
+        }
+        None
     }
 }

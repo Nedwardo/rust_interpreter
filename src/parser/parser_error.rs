@@ -3,7 +3,7 @@ use crate::token::Token;
 use crate::token_type::TokenType;
 use std::fmt::Display;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ParserError {
     UnexpectedToken {
         source: String,
@@ -11,13 +11,16 @@ pub enum ParserError {
         token_type: TokenType,
         expected_token_types: &'static [TokenType],
     },
+    InvalidAssignmentTarget {
+        line: usize,
+    },
     EOFWhileExpecting {
         expected_token_types: &'static [TokenType],
     },
     UnexpectedEOF,
     FailedToGenerateChildExpr {
         error_message: String,
-        source: Box<Self>,
+        source: Vec<Self>,
     },
 }
 
@@ -48,7 +51,7 @@ impl ParserError {
     pub fn wrap(self, error_message: String) -> Self {
         Self::FailedToGenerateChildExpr {
             error_message,
-            source: Box::new(self),
+            source: vec![self],
         }
     }
 }
@@ -73,6 +76,15 @@ impl<T> WrapErr<T, ParserError, String> for Result<T, ParserError> {
     }
 }
 
+impl<T> WrapErr<T, ParserError, String> for Result<T, Vec<ParserError>> {
+    fn wrap_err(self, expr: String) -> Result<T, ParserError> {
+        self.map_err(|e| ParserError::FailedToGenerateChildExpr {
+            error_message: expr,
+            source: e,
+        })
+    }
+}
+
 impl From<ParserError> for StageError {
     fn from(val: ParserError) -> Self {
         match val {
@@ -84,11 +96,18 @@ impl From<ParserError> for StageError {
             } => Self {
                 line: Some(line),
                 message: format!(
-                    "Expected one of: {expected_token_types:?}, found {token_type}",
+                    "Unexpected Token: Expected one of: {expected_token_types:?}, found {token_type}",
                 ),
                 error_location: Some(source),
                 stage: "parsing",
-                child: None,
+                children: Vec::new(),
+            },
+            ParserError::InvalidAssignmentTarget { line } => Self {
+                line: Some(line),
+                message: "Invalid assignment target".to_owned(),
+                error_location: Some("=".to_owned()),
+                stage: "parsing",
+                children: Vec::new(),
             },
             ParserError::EOFWhileExpecting {
                 expected_token_types,
@@ -99,14 +118,14 @@ impl From<ParserError> for StageError {
                 ),
                 error_location: None,
                 stage: "parsing",
-                child: None,
+                children: Vec::new(),
             },
             ParserError::UnexpectedEOF => Self {
                 line: None,
                 message: "Unexpected EOF".to_owned(),
                 error_location: None,
                 stage: "parsing",
-                child: None,
+                children: Vec::new(),
             },
             ParserError::FailedToGenerateChildExpr {
                 error_message,
@@ -116,7 +135,7 @@ impl From<ParserError> for StageError {
                 message: error_message,
                 error_location: None,
                 stage: "parsing",
-                child: Some(Box::new((*source).into())),
+                children: source.iter().map(|e| e.clone().into()).collect(),
             },
         }
     }

@@ -36,7 +36,7 @@ impl<'a> From<EvaluationError<'a>> for StageError {
                 ),
                 error_location: None,
                 stage: "parsing",
-                child: None,
+                children: Vec::new(),
             },
             EvaluationError::UnsupportedUnaryOperand {
                 line,
@@ -49,7 +49,7 @@ impl<'a> From<EvaluationError<'a>> for StageError {
                 ),
                 error_location: None,
                 stage: "parsing",
-                child: None,
+                children: Vec::new(),
             },
             EvaluationError::UndefinedVariable { name, line } => Self {
                 line: Some(line),
@@ -58,7 +58,7 @@ impl<'a> From<EvaluationError<'a>> for StageError {
                 ),
                 error_location: Some(name.to_owned()),
                 stage: "parsing",
-                child: None,
+                children: Vec::new(),
             },
         }
     }

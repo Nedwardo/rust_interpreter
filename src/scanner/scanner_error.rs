@@ -15,7 +15,7 @@ impl<'a> From<ScannerError<'a>> for StageError {
             message: val.message.to_owned(),
             error_location: val.error_location.map(ToOwned::to_owned),
             stage: "scanning",
-            child: None,
+            children: Vec::new(),
         }
     }
 }
