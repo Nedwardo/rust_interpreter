@@ -4,15 +4,15 @@ use std::fmt::Write as _;
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug)]
-pub struct StageError<'a> {
+pub struct StageError {
     pub line: Option<usize>,
     pub message: String,
-    pub error_location: Option<&'a str>,
+    pub error_location: Option<String>,
     pub stage: &'static str,
     pub child: Option<Box<Self>>,
 }
 
-impl StageError<'_> {
+impl StageError {
     fn generate_error_message(&self, source_string: &str) -> String {
         let mut formatted_error_message = self.line.map_or_else(
             || format!("Error during {}: {}", self.stage, self.message),
@@ -20,7 +20,7 @@ impl StageError<'_> {
                 let source_line =
                 source_string.split('\n').nth(line - 1).unwrap_or("EOF");
 
-            self.error_location.map_or_else(
+            self.error_location.as_ref().map_or_else(
             || {
                 format!(
                     "Error during {}: {}\n {: >3} | {}",
@@ -56,11 +56,9 @@ pub struct FlattenedError {
     error_message: String,
 }
 
-impl<'a> FlattenedError {
-    pub fn flatten(
-        errors: Vec<impl Into<StageError<'a>>>,
-        source: &'a str,
-    ) -> Self {
+#[allow(unused, reason = "string write! cannot fail")]
+impl FlattenedError {
+    pub fn flatten(errors: Vec<impl Into<StageError>>, source: &str) -> Self {
         let mut error_message = String::new();
 
         for err in errors {

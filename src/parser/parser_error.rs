@@ -6,7 +6,9 @@ use std::fmt::Display;
 #[derive(Debug)]
 pub enum ParserError {
     UnexpectedToken {
-        token: OwnedToken,
+        source: String,
+        line: usize,
+        token_type: TokenType,
         expected_token_types: &'static [TokenType],
     },
     EOFWhileExpecting {
@@ -19,20 +21,18 @@ pub enum ParserError {
     },
 }
 
-#[derive(Debug)]
-pub struct OwnedToken {
-    pub lexeme: String,
-    pub kind: TokenType,
-    pub line: usize,
-}
-
 impl ParserError {
     pub fn unexpected_token(
-        token: &Token,
+        token: &Token<'_>,
         expected_token_types: &'static [TokenType],
     ) -> Self {
         Self::UnexpectedToken {
-            token: OwnedToken::from(token),
+            source: token.token_value.map_or_else(
+                || token.kind.to_string(),
+                |token| token.to_string(),
+            ),
+            line: token.line,
+            token_type: token.kind,
             expected_token_types,
         }
     }
@@ -73,25 +73,26 @@ impl<T> WrapErr<T, ParserError, String> for Result<T, ParserError> {
     }
 }
 
-impl From<ParserError> for StageError<'_> {
+impl From<ParserError> for StageError {
     fn from(val: ParserError) -> Self {
         match val {
             ParserError::UnexpectedToken {
-                token,
+                source,
+                line,
+                token_type,
                 expected_token_types,
-            } => StageError {
-                line: Some(token.line),
+            } => Self {
+                line: Some(line),
                 message: format!(
-                    "Expected one of: {expected_token_types:?}, found {}",
-                    token.kind
+                    "Expected one of: {expected_token_types:?}, found {token_type}",
                 ),
-                error_location: None,
+                error_location: Some(source),
                 stage: "parsing",
                 child: None,
             },
             ParserError::EOFWhileExpecting {
                 expected_token_types,
-            } => StageError {
+            } => Self {
                 line: None,
                 message: format!(
                     "Found EOF while expecting {expected_token_types:?}"
@@ -100,7 +101,7 @@ impl From<ParserError> for StageError<'_> {
                 stage: "parsing",
                 child: None,
             },
-            ParserError::UnexpectedEOF => StageError {
+            ParserError::UnexpectedEOF => Self {
                 line: None,
                 message: "Unexpected EOF".to_owned(),
                 error_location: None,
@@ -110,26 +111,13 @@ impl From<ParserError> for StageError<'_> {
             ParserError::FailedToGenerateChildExpr {
                 error_message,
                 source,
-            } => StageError {
+            } => Self {
                 line: None,
                 message: error_message,
                 error_location: None,
                 stage: "parsing",
                 child: Some(Box::new((*source).into())),
             },
-        }
-    }
-}
-
-impl From<&Token<'_>> for OwnedToken {
-    fn from(value: &Token<'_>) -> Self {
-        Self {
-            lexeme: value.token_value.map_or_else(
-                || value.kind.to_string(),
-                |token| token.to_string(),
-            ),
-            kind: value.kind,
-            line: value.line,
         }
     }
 }

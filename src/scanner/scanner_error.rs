@@ -1,4 +1,5 @@
 use crate::error_utils::StageError;
+use std::borrow::ToOwned;
 
 #[derive(Debug)]
 pub struct ScannerError<'a> {
@@ -7,12 +8,12 @@ pub struct ScannerError<'a> {
     pub error_location: Option<&'a str>,
 }
 
-impl<'a> From<ScannerError<'a>> for StageError<'a> {
+impl<'a> From<ScannerError<'a>> for StageError {
     fn from(val: ScannerError<'a>) -> Self {
-        StageError {
+        Self {
             line: Some(val.line),
             message: val.message.to_owned(),
-            error_location: val.error_location,
+            error_location: val.error_location.map(ToOwned::to_owned),
             stage: "scanning",
             child: None,
         }

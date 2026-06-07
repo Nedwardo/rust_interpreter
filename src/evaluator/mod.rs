@@ -14,22 +14,22 @@ use crate::expressions::{BinaryOperator, Expr, UnaryOperator};
 
 pub fn evaluate<'a>(
     statments: &'a Vec<Statment<'a>>,
-) -> Result<(), Vec<impl Into<StageError<'a>>>> {
+) -> Result<(), Vec<impl Into<StageError>>> {
     let mut env = Environment::new(None);
     let mut errors = Vec::new();
     for statment in statments {
         match statment {
             Statment::Expression(expr) => {
-                if let Err(e) = visit(expr) {
+                if let Err(e) = visit(expr, &env) {
                     errors.push(e);
                 }
             }
-            Statment::Print(expr) => match visit(expr) {
+            Statment::Print(expr) => match visit(expr, &env) {
                 Ok(value) => println!("{value}"),
                 Err(e) => errors.push(e),
             },
             Statment::Declaration { name, expression } => match expression {
-                Some(expr) => match visit(expr) {
+                Some(expr) => match visit(expr, &env) {
                     Ok(value) => env.define(name, Some(value)),
                     Err(e) => errors.push(e),
                 },
@@ -43,36 +43,43 @@ pub fn evaluate<'a>(
     Ok(())
 }
 
-fn visit<'a>(expr: &'a Expr<'a>) -> Result<Box<Value>, EvaluationError<'a>> {
+fn visit<'a>(
+    expr: &'a Expr<'a>,
+    env: &Environment,
+) -> Result<Value, EvaluationError<'a>> {
     match &expr.kind {
-        ExprKind::Literal(value) => Ok(Box::new(value.clone())),
-        ExprKind::Identifier(name) => get_identifier(name),
-        ExprKind::Unary(unary) => visit_unary(unary, expr.line),
-        ExprKind::Binary(binary) => visit_binary(binary, expr.line),
-        ExprKind::Grouping(expr) => visit(expr),
+        ExprKind::Literal(value) => Ok(value.clone()),
+        ExprKind::Unary(unary) => visit_unary(unary, expr.line, env),
+        ExprKind::Binary(binary) => visit_binary(binary, expr.line, env),
+        ExprKind::Grouping(expr) => visit(expr, env),
+        ExprKind::Identifier(name) => {
+            env.get(name)
+                .cloned()
+                .ok_or(EvaluationError::UndefinedVariable {
+                    name,
+                    line: expr.line,
+                })
+        }
     }
-}
-
-fn get_identifier(name: &'_ str) -> Result<Box<Value>, EvaluationError<'_>> {
-    todo!()
 }
 
 fn visit_unary<'a>(
     unary: &'a Unary,
     line: usize,
-) -> Result<Box<Value>, EvaluationError<'a>> {
-    let value = visit(&unary.expr)?;
+    env: &Environment,
+) -> Result<Value, EvaluationError<'a>> {
+    let value = visit(&unary.expr, env)?;
 
     match unary.operator {
-        UnaryOperator::MINUS => match *value {
-            Value::Number(num) => Ok(Box::new(Value::Number(-num))),
+        UnaryOperator::MINUS => match value {
+            Value::Number(num) => Ok(Value::Number(-num)),
             _ => Err(UnsupportedUnaryOperand {
                 expr_type: value.type_name(),
                 operator: unary.operator,
                 line,
             }),
         },
-        UnaryOperator::BANG => Ok(Box::new(Value::Boolean(!as_bool(&value)))),
+        UnaryOperator::BANG => Ok(Value::Boolean(!as_bool(&value))),
     }
 }
 
@@ -83,32 +90,27 @@ fn visit_unary<'a>(
 fn visit_binary<'a>(
     binary: &'a Binary,
     line: usize,
-) -> Result<Box<Value>, EvaluationError<'a>> {
-    let left_value = visit(&binary.left)?;
-    let right_value = visit(&binary.right)?;
+    env: &Environment,
+) -> Result<Value, EvaluationError<'a>> {
+    let left_value = visit(&binary.left, env)?;
+    let right_value = visit(&binary.right, env)?;
 
     match binary.operator {
         BinaryOperator::EQUAL_EQUAL => {
-            return Ok(Box::new(Value::Boolean(is_equal(
-                &left_value,
-                &right_value,
-            ))));
+            return Ok(Value::Boolean(is_equal(&left_value, &right_value)));
         }
         BinaryOperator::BANG_EQUAL => {
-            return Ok(Box::new(Value::Boolean(!is_equal(
-                &left_value,
-                &right_value,
-            ))));
+            return Ok(Value::Boolean(!is_equal(&left_value, &right_value)));
         }
         BinaryOperator::PLUS => {
-            if let Value::String(lhs_string) = *left_value {
-                return Ok(Box::new(Value::String(
+            if let Value::String(lhs_string) = left_value {
+                return Ok(Value::String(
                     lhs_string + &right_value.cast_to_string(),
-                )));
-            } else if let Value::String(rhs_string) = *right_value {
-                return Ok(Box::new(Value::String(
+                ));
+            } else if let Value::String(rhs_string) = right_value {
+                return Ok(Value::String(
                     left_value.cast_to_string() + &rhs_string,
-                )));
+                ));
             }
         }
         _ => {}
@@ -116,12 +118,12 @@ fn visit_binary<'a>(
 
     let left_type = left_value.type_name();
 
-    if let Value::Number(lhs) = *left_value
-        && let Value::Number(rhs) = *right_value
+    if let Value::Number(lhs) = left_value
+        && let Value::Number(rhs) = right_value
         && let Some(value) =
             numeric_binary_operations(lhs, binary.operator, rhs)
     {
-        return Ok(Box::new(value));
+        return Ok(value);
     }
     Err(UnsupportedBinaryOperand {
         lhs_type: left_type,

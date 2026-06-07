@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 pub struct Environment<'a> {
     enclosing: Option<&'a Self>,
-    values: HashMap<&'a str, Option<Box<Value>>>,
+    values: HashMap<&'a str, Value>,
 }
 
 impl<'a> Environment<'a> {
@@ -14,11 +14,11 @@ impl<'a> Environment<'a> {
         }
     }
 
-    pub fn define(&mut self, name: &'a str, value: Option<Box<Value>>) {
-        self.values.insert(name, value);
+    pub fn define(&mut self, name: &'a str, value: Option<Value>) {
+        self.values.insert(name, value.unwrap_or(Value::Nil));
     }
 
-    pub fn get(&self, name: &str) -> Option<&Option<Box<Value>>> {
+    pub fn get(&self, name: &str) -> Option<&Value> {
         self.values.get(name)
     }
 }

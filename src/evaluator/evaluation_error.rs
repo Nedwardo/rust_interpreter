@@ -21,7 +21,7 @@ pub enum EvaluationError<'a> {
     },
 }
 
-impl<'a> From<EvaluationError<'a>> for StageError<'a> {
+impl<'a> From<EvaluationError<'a>> for StageError {
     fn from(val: EvaluationError<'a>) -> Self {
         match val {
             EvaluationError::UnsupportedBinaryOperand {
@@ -29,7 +29,7 @@ impl<'a> From<EvaluationError<'a>> for StageError<'a> {
                 operator,
                 lhs_type,
                 rhs_type,
-            } => StageError {
+            } => Self {
                 line: Some(line),
                 message: format!(
                     "Line {line}\nEvaluation Error: Unsupported operand type for {operator}: '{lhs_type}' and '{rhs_type}'"
@@ -42,7 +42,7 @@ impl<'a> From<EvaluationError<'a>> for StageError<'a> {
                 line,
                 operator,
                 expr_type,
-            } => StageError {
+            } => Self {
                 line: Some(line),
                 message: format!(
                     "Line {line}\n Evaluation Error: Bad operand type for unary {operator}: '{expr_type}'"
@@ -51,12 +51,12 @@ impl<'a> From<EvaluationError<'a>> for StageError<'a> {
                 stage: "parsing",
                 child: None,
             },
-            EvaluationError::UndefinedVariable { name, line } => StageError {
+            EvaluationError::UndefinedVariable { name, line } => Self {
                 line: Some(line),
                 message: format!(
                     "Line {line}\n Evaluation Error: Variable {name} is not defined"
                 ),
-                error_location: Some(name),
+                error_location: Some(name.to_owned()),
                 stage: "parsing",
                 child: None,
             },
