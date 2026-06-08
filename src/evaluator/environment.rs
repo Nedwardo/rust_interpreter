@@ -29,9 +29,7 @@ impl<'a> Environment<'a> {
 
     pub fn update(&mut self, name: &'a str, value: Value) -> Result<(), ()> {
         for scope in self.scopes.iter_mut().rev() {
-            eprintln!("Checking scope");
             if scope.contains_key(name) {
-                eprintln!("Found");
                 scope.insert(name, value);
                 return Ok(());
             }

@@ -30,11 +30,6 @@ fn evaluate_statments<'a>(
                     errors.push(e);
                 }
             }
-            Statment::Print(expr) => {
-                if let Err(e) = visit(expr, env) {
-                    errors.push(e);
-                }
-            }
             Statment::Print(expr) => match visit(expr, env) {
                 Ok(value) => println!("{value}"),
                 Err(e) => errors.push(e),
