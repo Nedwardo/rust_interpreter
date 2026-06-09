@@ -7,6 +7,7 @@ use crate::parser::parser_error::{ParserError, WrapErr};
 use crate::token::Token;
 use crate::token::TokenValue as TV;
 use crate::token_type::TokenType as TT;
+use std::iter::Peekable;
 use std::vec::IntoIter;
 use std::vec::Vec;
 
@@ -30,10 +31,16 @@ pub const fn infix_precedence(token_type: BinaryOp) -> (usize, usize) {
     }
 }
 
-#[derive(Debug)]
+struct TokenIter<'a>(IntoIter<Token<'a>>);
+impl<'a> Iterator for TokenIter<'a> {
+    type Item = Token<'a>;
+    fn next(&mut self) -> Option<Token<'a>> {
+        self.0.by_ref().find(|t| t.kind != TT::COMMENT)
+    }
+}
+
 pub struct Parser<'a> {
-    tokens: IntoIter<Token<'a>>,
-    peeked: Option<Token<'a>>,
+    tokens: Peekable<TokenIter<'a>>,
 }
 
 pub fn parse(
@@ -45,31 +52,16 @@ pub fn parse(
 impl<'a> Parser<'a> {
     pub fn new(tokens: Vec<Token<'a>>) -> Self {
         Parser {
-            tokens: tokens.into_iter(),
-            peeked: None,
+            tokens: TokenIter(tokens.into_iter()).peekable(),
         }
-    }
-
-    fn next(&mut self) -> Option<Token<'a>> {
-        if self.peeked.is_some() {
-            return self.peeked.take();
-        }
-        self.tokens.by_ref().find(|token| token.kind != TT::COMMENT)
-    }
-
-    fn peek(&mut self) -> Option<&Token<'a>> {
-        if self.peeked.is_none() {
-            self.peeked = self.next();
-        }
-        self.peeked.as_ref()
     }
 
     fn parse(&mut self) -> Result<Vec<Statment<'a>>, Vec<ParserError>> {
         let mut statments = Vec::new();
         let mut errors = Vec::new();
-        while let Some(token) = self.peek() {
+        while let Some(token) = self.tokens.peek() {
             if token.kind == TT::LEFT_BRACE {
-                self.next();
+                self.tokens.next();
                 match self.block() {
                     Ok(statment) => statments.push(statment),
                     Err(e) => errors.extend(e),
@@ -91,7 +83,7 @@ impl<'a> Parser<'a> {
     fn block(&mut self) -> Result<Statment<'a>, Vec<ParserError>> {
         let mut members = Vec::new();
         let mut errors = Vec::new();
-        while let Some(next_token) = self.peek()
+        while let Some(next_token) = self.tokens.peek()
             && next_token.kind != TT::RIGHT_BRACE
         {
             let statment = if next_token.kind == TT::LEFT_BRACE {
@@ -109,7 +101,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        if let Some(token) = self.next() {
+        if let Some(token) = self.tokens.next() {
             if token.kind != TT::RIGHT_BRACE {
                 errors.push(ParserError::unexpected_token(
                     &token,
@@ -127,30 +119,32 @@ impl<'a> Parser<'a> {
     }
 
     fn statment(&mut self) -> Result<Statment<'a>, ParserError> {
-        let next_token = self.peek().ok_or(ParserError::UnexpectedEOF)?;
+        let next_token =
+            self.tokens.peek().ok_or(ParserError::UnexpectedEOF)?;
         let statment = if next_token.kind == TT::VAR {
-            self.next();
+            self.tokens.next();
             self.declaration()?
         } else if next_token.kind == TT::PRINT {
-            self.next();
+            self.tokens.next();
             self.expression(0).map(Statment::Print)?
         } else {
             self.expression(0).map(Statment::Expression)?
         };
-        if let Some(token) = self.peek()
+        if let Some(token) = self.tokens.peek()
             && token.kind != TT::SEMICOLON
         {
             Err(ParserError::unexpected_token(token, &[TT::SEMICOLON]))
         } else {
-            self.next();
+            self.tokens.next();
             Ok(statment)
         }
     }
 
     fn declaration(&mut self) -> Result<Statment<'a>, ParserError> {
-        let token = self.next().ok_or(ParserError::EOFWhileExpecting {
-            expected_token_types: &[TT::IDENTIFIER],
-        })?;
+        let token =
+            self.tokens.next().ok_or(ParserError::EOFWhileExpecting {
+                expected_token_types: &[TT::IDENTIFIER],
+            })?;
 
         let Some(TV::Identifier(name)) = token.token_value else {
             return Err(ParserError::unexpected_token(
@@ -159,12 +153,13 @@ impl<'a> Parser<'a> {
             ));
         };
 
-        let expression = if self.peek().is_some_and(|t| t.kind == TT::EQUAL) {
-            self.next();
-            Some(self.expression(0)?)
-        } else {
-            None
-        };
+        let expression =
+            if self.tokens.peek().is_some_and(|t| t.kind == TT::EQUAL) {
+                self.tokens.next();
+                Some(self.expression(0)?)
+            } else {
+                None
+            };
         Ok(Statment::Declaration { name, expression })
     }
 
@@ -174,10 +169,10 @@ impl<'a> Parser<'a> {
     ) -> Result<Expr<'a>, ParserError> {
         let lhs = self.build_binary(current_precedence)?;
 
-        if let Some(infix) = self.peek()
+        if let Some(infix) = self.tokens.peek()
             && infix.kind == TT::EQUAL
         {
-            let token = self.next().expect("Retriving a peeked value");
+            let token = self.tokens.next().expect("Retriving a peeked value");
             let rhs = self.expression(current_precedence)?;
 
             if let ExprKind::Identifier(name) = lhs.kind {
@@ -202,6 +197,7 @@ impl<'a> Parser<'a> {
         let mut lhs = self.parse_prefix()?;
 
         while let Some(infix) = self
+            .tokens
             .peek()
             .and_then(|token| BinaryOp::try_from(token.kind).ok())
         {
@@ -209,7 +205,7 @@ impl<'a> Parser<'a> {
             if l_precedence < current_precedence {
                 break;
             }
-            let token = self.next().expect("Retriving a peeked value");
+            let token = self.tokens.next().expect("Retriving a peeked value");
             let rhs = self.build_binary(r_precedence).wrap_err_with(|| {
                 format!("Failed reading rhs for {token:?}")
             })?;
@@ -224,7 +220,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn parse_prefix(&mut self) -> Result<Expr<'a>, ParserError> {
-        let token = self.next().ok_or(ParserError::UnexpectedEOF)?;
+        let token = self.tokens.next().ok_or(ParserError::UnexpectedEOF)?;
 
         if let Some(token_value) = token.token_value {
             return Ok(build_value(token_value, token.line));
@@ -257,6 +253,7 @@ impl<'a> Parser<'a> {
     fn build_group(&mut self) -> Result<Expr<'a>, ParserError> {
         let inner = self.expression(0)?;
         let token = self
+            .tokens
             .next()
             .ok_or_else(|| ParserError::expected_token(&[TT::RIGHT_PAREN]))?;
 
@@ -269,11 +266,11 @@ impl<'a> Parser<'a> {
     }
 
     fn synchronise(&mut self) {
-        while let Some(token) = self.next() {
+        while let Some(token) = self.tokens.next() {
             if token.kind == TT::SEMICOLON {
                 break;
             }
-            if self.peek().is_some_and(|next_token| {
+            if self.tokens.peek().is_some_and(|next_token| {
                 [
                     TT::CLASS,
                     TT::FUN,
