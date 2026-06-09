@@ -2,7 +2,7 @@ pub mod parser_error;
 use crate::error_utils::StageError;
 use crate::expressions::BinaryOperator as BinaryOp;
 use crate::expressions::ExprKind;
-use crate::expressions::{Expr, Statment, UnaryOperator, Value};
+use crate::expressions::{Expr, Statement, UnaryOperator, Value};
 use crate::parser::parser_error::{ParserError, WrapErr};
 use crate::token::Token;
 use crate::token::TokenValue as TV;
@@ -45,7 +45,7 @@ pub struct Parser<'a> {
 
 pub fn parse(
     tokens: Vec<Token>,
-) -> Result<Vec<Statment>, Vec<impl Into<StageError>>> {
+) -> Result<Vec<Statement>, Vec<impl Into<StageError>>> {
     Parser::new(tokens).parse()
 }
 
@@ -56,7 +56,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse(&mut self) -> Result<Vec<Statment<'a>>, Vec<ParserError>> {
+    fn parse(&mut self) -> Result<Vec<Statement<'a>>, Vec<ParserError>> {
         let mut statments = Vec::new();
         let mut errors = Vec::new();
         while let Some(token) = self.tokens.peek() {
@@ -80,7 +80,7 @@ impl<'a> Parser<'a> {
         Ok(statments)
     }
 
-    fn block(&mut self) -> Result<Statment<'a>, Vec<ParserError>> {
+    fn block(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
         let mut members = Vec::new();
         let mut errors = Vec::new();
         while let Some(next_token) = self.tokens.peek()
@@ -115,10 +115,10 @@ impl<'a> Parser<'a> {
         if !errors.is_empty() {
             return Err(errors);
         }
-        Ok(Statment::Group(members))
+        Ok(Statement::Group(members))
     }
 
-    fn statment(&mut self) -> Result<Statment<'a>, ParserError> {
+    fn statment(&mut self) -> Result<Statement<'a>, ParserError> {
         let next_token =
             self.tokens.peek().ok_or(ParserError::UnexpectedEOF)?;
         let statment = if next_token.kind == TT::VAR {
@@ -126,9 +126,9 @@ impl<'a> Parser<'a> {
             self.declaration()?
         } else if next_token.kind == TT::PRINT {
             self.tokens.next();
-            self.expression(0).map(Statment::Print)?
+            self.expression(0).map(Statement::Print)?
         } else {
-            self.expression(0).map(Statment::Expression)?
+            self.expression(0).map(Statement::Expression)?
         };
         if let Some(token) = self.tokens.peek()
             && token.kind != TT::SEMICOLON
@@ -140,7 +140,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn declaration(&mut self) -> Result<Statment<'a>, ParserError> {
+    fn declaration(&mut self) -> Result<Statement<'a>, ParserError> {
         let token =
             self.tokens.next().ok_or(ParserError::EOFWhileExpecting {
                 expected_token_types: &[TT::IDENTIFIER],
@@ -160,7 +160,7 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
-        Ok(Statment::Declaration { name, expression })
+        Ok(Statement::Declaration { name, expression })
     }
 
     fn expression(

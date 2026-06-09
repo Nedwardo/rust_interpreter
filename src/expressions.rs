@@ -3,7 +3,7 @@ use crate::token_type::operator_subset;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
-pub enum Statment<'a> {
+pub enum Statement<'a> {
     Declaration {
         name: &'a str,
         expression: Option<Expr<'a>>,

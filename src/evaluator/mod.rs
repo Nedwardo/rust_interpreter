@@ -8,40 +8,40 @@ use crate::evaluator::evaluation_error::EvaluationError::{
 };
 
 use crate::error_utils::StageError;
-use crate::expressions::Statment;
+use crate::expressions::Statement;
 use crate::expressions::{Binary, ExprKind, Unary, Value};
 use crate::expressions::{BinaryOperator, Expr, UnaryOperator};
 
 pub fn evaluate<'a>(
-    statments: &'a Vec<Statment<'a>>,
+    statments: &'a Vec<Statement<'a>>,
 ) -> Result<(), Vec<impl Into<StageError> + use<'a>>> {
     evaluate_statments(statments, &mut Environment::new())
 }
 
 fn evaluate_statments<'a>(
-    statments: &'a Vec<Statment<'a>>,
+    statments: &'a Vec<Statement<'a>>,
     env: &mut Environment<'a>,
 ) -> Result<(), Vec<impl Into<StageError> + use<'a>>> {
     let mut errors = Vec::new();
     for statment in statments {
         match statment {
-            Statment::Expression(expr) => {
+            Statement::Expression(expr) => {
                 if let Err(e) = visit(expr, env) {
                     errors.push(e);
                 }
             }
-            Statment::Print(expr) => match visit(expr, env) {
+            Statement::Print(expr) => match visit(expr, env) {
                 Ok(value) => println!("{value}"),
                 Err(e) => errors.push(e),
             },
-            Statment::Declaration { name, expression } => match expression {
+            Statement::Declaration { name, expression } => match expression {
                 Some(expr) => match visit(expr, env) {
                     Ok(value) => env.define(name, Some(value)),
                     Err(e) => errors.push(e),
                 },
                 None => env.define(name, None),
             },
-            Statment::Group(s) => {
+            Statement::Group(s) => {
                 env.narrow();
                 if let Err(e) = evaluate_statments(s, env) {
                     errors.extend(e.into_iter());
