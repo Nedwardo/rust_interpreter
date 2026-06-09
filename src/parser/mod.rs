@@ -2,7 +2,7 @@ pub mod parser_error;
 use crate::error_utils::StageError;
 use crate::expressions::BinaryOperator as BinaryOp;
 use crate::expressions::ExprKind;
-use crate::expressions::{Assignment, Expr, Statment, UnaryOperator, Value};
+use crate::expressions::{Expr, Statment, UnaryOperator, Value};
 use crate::parser::parser_error::{ParserError, WrapErr};
 use crate::token::Token;
 use crate::token::TokenValue as TV;
@@ -148,20 +148,24 @@ impl<'a> Parser<'a> {
     }
 
     fn declaration(&mut self) -> Result<Statment<'a>, ParserError> {
-        let expr = self.expression(0)?;
-        if let ExprKind::Assignment(Assignment { name, expr }) = expr.kind {
-            return Ok(Statment::Declaration {
-                name,
-                expression: Some(*expr),
-            });
-        } else if let ExprKind::Identifier(name) = expr.kind {
-            return Ok(Statment::Declaration {
-                name,
-                expression: None,
-            });
-        }
+        let token = self.next().ok_or(ParserError::EOFWhileExpecting {
+            expected_token_types: &[TT::IDENTIFIER],
+        })?;
 
-        Err(ParserError::UnexpectedEOF)
+        let Some(TV::Identifier(name)) = token.token_value else {
+            return Err(ParserError::unexpected_token(
+                &token,
+                &[TT::IDENTIFIER],
+            ));
+        };
+
+        let expression = if self.peek().is_some_and(|t| t.kind == TT::EQUAL) {
+            self.next();
+            Some(self.expression(0)?)
+        } else {
+            None
+        };
+        Ok(Statment::Declaration { name, expression })
     }
 
     fn expression(
