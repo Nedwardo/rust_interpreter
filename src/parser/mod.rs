@@ -60,17 +60,15 @@ impl<'a> Parser<'a> {
         let mut statments = Vec::new();
         let mut errors = Vec::new();
         while let Some(token) = self.tokens.peek() {
-            if token.kind == TT::LEFT_BRACE {
+            let result = if token.kind == TT::LEFT_BRACE {
                 self.tokens.next();
-                match self.block() {
-                    Ok(statment) => statments.push(statment),
-                    Err(e) => errors.extend(e),
-                }
+                self.block()
             } else {
-                match self.statment() {
-                    Ok(statment) => statments.push(statment),
-                    Err(e) => errors.push(e),
-                }
+                self.statment().map_err(|e| vec![e])
+            };
+            match result {
+                Ok(statment) => statments.push(statment),
+                Err(e) => errors.extend(e),
             }
         }
 
@@ -127,9 +125,13 @@ impl<'a> Parser<'a> {
         } else if next_token.kind == TT::PRINT {
             self.tokens.next();
             self.expression(0).map(Statement::Print)?
+        } else if next_token.kind == TT::IF {
+            self.tokens.next();
+            self.if_statment()?
         } else {
             self.expression(0).map(Statement::Expression)?
         };
+        todo!("Extract this to it's own function instead");
         if let Some(token) = self.tokens.peek()
             && token.kind != TT::SEMICOLON
         {
@@ -161,6 +163,24 @@ impl<'a> Parser<'a> {
                 None
             };
         Ok(Statement::Declaration { name, expression })
+    }
+
+    fn if_statment(&mut self) -> Result<Statement<'a>, ParserError> {
+        if let Some(token) = self
+            .tokens
+            .next()
+            .ok_or(ParserError::EOFWhileExpecting {
+                expected_token_types: &[TT::LEFT_BRACE],
+            })?
+            .kind
+            != TT::LEFT_BRACE
+        {
+            return Err(ParserError::unexpected_token(
+                &token,
+                &[TT::LEFT_BRACE],
+            ));
+        }
+        let condition = self.expression(0);
     }
 
     fn expression(

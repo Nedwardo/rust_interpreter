@@ -14,22 +14,23 @@ use crate::expressions::{BinaryOperator, Expr, UnaryOperator};
 
 pub fn evaluate<'a>(
     statments: &'a Vec<Statement<'a>>,
-) -> Result<(), Vec<impl Into<StageError> + use<'a>>> {
+) -> Result<Option<Value>, Vec<impl Into<StageError> + use<'a>>> {
     evaluate_statments(statments, &mut Environment::new())
 }
 
 fn evaluate_statments<'a>(
     statments: &'a Vec<Statement<'a>>,
     env: &mut Environment<'a>,
-) -> Result<(), Vec<impl Into<StageError> + use<'a>>> {
+) -> Result<Option<Value>, Vec<impl Into<StageError> + use<'a>>> {
     let mut errors = Vec::new();
+    let mut result: Option<Value> = None;
     for statment in statments {
+        result = None;
         match statment {
-            Statement::Expression(expr) => {
-                if let Err(e) = visit(expr, env) {
-                    errors.push(e);
-                }
-            }
+            Statement::Expression(expr) => match visit(expr, env) {
+                Ok(value) => result = Some(value),
+                Err(e) => errors.push(e),
+            },
             Statement::Print(expr) => match visit(expr, env) {
                 Ok(value) => println!("{value}"),
                 Err(e) => errors.push(e),
@@ -53,7 +54,7 @@ fn evaluate_statments<'a>(
     if !errors.is_empty() {
         return Err(errors);
     }
-    Ok(())
+    Ok(result)
 }
 
 fn visit<'a>(
@@ -65,14 +66,17 @@ fn visit<'a>(
         ExprKind::Unary(unary) => visit_unary(unary, expr.line, env),
         ExprKind::Binary(binary) => visit_binary(binary, expr.line, env),
         ExprKind::Grouping(expr) => visit(expr, env),
-        ExprKind::Identifier(name) => {
-            env.get(name)
-                .cloned()
-                .ok_or(EvaluationError::UndefinedVariable {
-                    name,
-                    line: expr.line,
-                })
-        }
+        ExprKind::Identifier(name) => env
+            .get(name)
+            .cloned()
+            .ok_or(EvaluationError::UndefinedVariable {
+                name,
+                line: expr.line,
+            })?
+            .ok_or(EvaluationError::UnitialisedVariable {
+                name,
+                line: expr.line,
+            }),
         ExprKind::Assignment(assignment) => {
             let value = visit(&assignment.expr, env)?;
             env.update(assignment.name, value.clone()).map_err(|()| {

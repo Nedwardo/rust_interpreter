@@ -11,6 +11,11 @@ pub enum Statement<'a> {
     Expression(Expr<'a>),
     Print(Expr<'a>),
     Group(Vec<Self>),
+    If {
+        expr: Expr<'a>,
+        then: Box<Self>,
+        r#else: Option<Box<Self>>,
+    },
 }
 
 #[derive(Debug)]

@@ -19,6 +19,10 @@ pub enum EvaluationError<'a> {
         name: &'a str,
         line: usize,
     },
+    UnitialisedVariable {
+        name: &'a str,
+        line: usize,
+    },
 }
 
 impl<'a> From<EvaluationError<'a>> for StageError {
@@ -55,6 +59,15 @@ impl<'a> From<EvaluationError<'a>> for StageError {
                 line: Some(line),
                 message: format!(
                     "Line {line}\n Evaluation Error: Variable {name} is not defined"
+                ),
+                error_location: Some(name.to_owned()),
+                stage: "parsing",
+                children: Vec::new(),
+            },
+            EvaluationError::UnitialisedVariable { name, line } => Self {
+                line: Some(line),
+                message: format!(
+                    "Line {line}\n Evaluation Error: Variable {name} is not initalised"
                 ),
                 error_location: Some(name.to_owned()),
                 stage: "parsing",

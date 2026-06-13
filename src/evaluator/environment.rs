@@ -2,7 +2,7 @@ use crate::expressions::Value;
 use std::collections::HashMap;
 
 pub struct Environment<'a> {
-    scopes: Vec<HashMap<&'a str, Value>>,
+    scopes: Vec<HashMap<&'a str, Option<Value>>>,
 }
 
 impl<'a> Environment<'a> {
@@ -24,20 +24,20 @@ impl<'a> Environment<'a> {
         self.scopes
             .last_mut()
             .expect("One hashmap should be initalised at all times")
-            .insert(name, value.unwrap_or(Value::Nil));
+            .insert(name, value);
     }
 
     pub fn update(&mut self, name: &'a str, value: Value) -> Result<(), ()> {
         for scope in self.scopes.iter_mut().rev() {
             if scope.contains_key(name) {
-                scope.insert(name, value);
+                scope.insert(name, Some(value));
                 return Ok(());
             }
         }
         Err(())
     }
 
-    pub fn get(&self, name: &str) -> Option<&Value> {
+    pub fn get(&self, name: &str) -> Option<&Option<Value>> {
         for scope in self.scopes.iter().rev() {
             if scope.contains_key(name) {
                 return scope.get(name);

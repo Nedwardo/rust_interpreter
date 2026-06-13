@@ -7,6 +7,7 @@ mod scanner;
 mod token;
 use crate::error_utils::FlattenedError;
 use crate::parser::parse;
+use std::fmt::Display;
 mod token_type;
 use crate::evaluator::evaluate;
 use read_file_error::ReadFileError;
@@ -49,13 +50,15 @@ fn run_prompt() -> Result<(), Box<dyn Error>> {
         let _ = stdin().read_line(&mut line)?;
 
         line.truncate(line.len() - 1);
-        if let Err(err) = run(&line) {
-            eprintln!("{err}");
+        match run(&line) {
+            Ok(Some(result)) => println!("{result}\n"),
+            Err(e) => eprintln!("{e}"),
+            Ok(_) => {}
         }
     }
 }
 
-fn run(file: &str) -> Result<(), Box<dyn Error>> {
+fn run(file: &str) -> Result<Option<impl Display>, Box<dyn Error>> {
     let tokens = scan(file).map_err(Box::new)?;
     let statments = parse(tokens)
         .map_err(|err| Box::new(FlattenedError::flatten(err, file)))?;
