@@ -85,6 +85,12 @@ impl<T> WrapErr<T, ParserError, String> for Result<T, Vec<ParserError>> {
     }
 }
 
+impl From<ParserError> for Vec<ParserError> {
+    fn from(val: ParserError) -> Self {
+        vec![val]
+    }
+}
+
 impl From<ParserError> for StageError {
     fn from(val: ParserError) -> Self {
         match val {

@@ -3,6 +3,7 @@ use crate::token_type::operator_subset;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
+#[derive(Debug)]
 pub enum Statement<'a> {
     Declaration {
         name: &'a str,
@@ -12,10 +13,43 @@ pub enum Statement<'a> {
     Print(Expr<'a>),
     Group(Vec<Self>),
     If {
-        expr: Expr<'a>,
-        then: Box<Self>,
-        r#else: Option<Box<Self>>,
+        condition: Expr<'a>,
+        true_branch: Box<Self>,
+        false_branch: Option<Box<Self>>,
     },
+    While {
+        condition: Expr<'a>,
+        body: Box<Self>,
+    },
+}
+
+impl<'a> Statement<'a> {
+    pub fn r#for(
+        initialiser: Option<Self>,
+        condition: Option<Expr<'a>>,
+        increment: Option<Expr<'a>>,
+        body: Box<Self>,
+        line: usize,
+    ) -> Self {
+        let body = match increment {
+            Some(inc) => {
+                Box::new(Self::Group(vec![*body, Self::Expression(inc)]))
+            }
+            None => body,
+        };
+        let flattened_condition = condition
+            .unwrap_or_else(|| Expr::literal(Value::Boolean(true), line));
+
+        let while_loop = Self::While {
+            condition: flattened_condition,
+            body,
+        };
+
+        match initialiser {
+            None => while_loop,
+            Some(init) => Self::Group(vec![init, while_loop]),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -32,6 +66,7 @@ pub enum ExprKind<'a> {
     Grouping(Box<Expr<'a>>),
     Binary(Binary<'a>),
     Assignment(Assignment<'a>),
+    Logical(Logical<'a>),
 }
 
 #[derive(Clone, Debug)]
@@ -61,6 +96,13 @@ pub struct Binary<'a> {
     pub right: Box<Expr<'a>>,
 }
 
+#[derive(Debug)]
+pub struct Logical<'a> {
+    pub left: Box<Expr<'a>>,
+    pub operator: LogicalOperator,
+    pub right: Box<Expr<'a>>,
+}
+
 operator_subset!(UnaryOperator, {MINUS, BANG});
 operator_subset!(BinaryOperator, {
     MINUS,
@@ -77,9 +119,26 @@ operator_subset!(BinaryOperator, {
     LESS,
     LESS_EQUAL,
 });
+operator_subset!(LogicalOperator, {OR, AND});
 
 impl<'a> Expr<'a> {
-    pub const fn new_binary(
+    pub const fn logical(
+        left: Box<Self>,
+        operator: LogicalOperator,
+        right: Box<Self>,
+        line: usize,
+    ) -> Self {
+        Expr {
+            line,
+            kind: ExprKind::Logical(Logical {
+                left,
+                operator,
+                right,
+            }),
+        }
+    }
+
+    pub const fn binary(
         left: Box<Self>,
         operator: BinaryOperator,
         right: Box<Self>,
@@ -95,7 +154,7 @@ impl<'a> Expr<'a> {
         }
     }
 
-    pub const fn new_unary(
+    pub const fn unary(
         operator: UnaryOperator,
         expr: Box<Self>,
         line: usize,
@@ -106,28 +165,28 @@ impl<'a> Expr<'a> {
         }
     }
 
-    pub const fn new_literal(value: Value, line: usize) -> Self {
+    pub const fn literal(value: Value, line: usize) -> Self {
         Expr {
             line,
             kind: ExprKind::Literal(value),
         }
     }
 
-    pub const fn new_identifier(identifier: &'a str, line: usize) -> Self {
+    pub const fn identifier(identifier: &'a str, line: usize) -> Self {
         Expr {
             line,
             kind: ExprKind::Identifier(identifier),
         }
     }
 
-    pub const fn new_grouping(grouping: Box<Self>, line: usize) -> Self {
+    pub const fn grouping(grouping: Box<Self>, line: usize) -> Self {
         Expr {
             line,
             kind: ExprKind::Grouping(grouping),
         }
     }
 
-    pub const fn new_assignment(
+    pub const fn assignment(
         name: &'a str,
         expr: Box<Self>,
         line: usize,

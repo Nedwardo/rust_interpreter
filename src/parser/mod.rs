@@ -2,32 +2,41 @@ pub mod parser_error;
 use crate::error_utils::StageError;
 use crate::expressions::BinaryOperator as BinaryOp;
 use crate::expressions::ExprKind;
+use crate::expressions::LogicalOperator;
 use crate::expressions::{Expr, Statement, UnaryOperator, Value};
 use crate::parser::parser_error::{ParserError, WrapErr};
 use crate::token::Token;
 use crate::token::TokenValue as TV;
 use crate::token_type::TokenType as TT;
+use log::trace;
 use std::iter::Peekable;
 use std::vec::IntoIter;
 use std::vec::Vec;
 
 pub const fn prefix_precedence(token_type: UnaryOperator) -> usize {
     match token_type {
-        UnaryOperator::BANG | UnaryOperator::MINUS => 13,
+        UnaryOperator::BANG | UnaryOperator::MINUS => 14,
+    }
+}
+
+pub const fn logical_precedence(token_type: LogicalOperator) -> usize {
+    match token_type {
+        LogicalOperator::AND => 1,
+        LogicalOperator::OR => 2,
     }
 }
 
 pub const fn infix_precedence(token_type: BinaryOp) -> (usize, usize) {
     match token_type {
-        BinaryOp::COMMA => (1, 2),
-        BinaryOp::QUESTION_MARK | BinaryOp::COLON => (4, 3),
-        BinaryOp::EQUAL_EQUAL | BinaryOp::BANG_EQUAL => (5, 6),
+        BinaryOp::COMMA => (2, 3),
+        BinaryOp::QUESTION_MARK | BinaryOp::COLON => (5, 4),
+        BinaryOp::EQUAL_EQUAL | BinaryOp::BANG_EQUAL => (6, 7),
         BinaryOp::LESS
         | BinaryOp::LESS_EQUAL
         | BinaryOp::GREATER
-        | BinaryOp::GREATER_EQUAL => (7, 8),
-        BinaryOp::PLUS | BinaryOp::MINUS => (9, 10),
-        BinaryOp::STAR | BinaryOp::SLASH => (11, 12),
+        | BinaryOp::GREATER_EQUAL => (8, 9),
+        BinaryOp::PLUS | BinaryOp::MINUS => (10, 11),
+        BinaryOp::STAR | BinaryOp::SLASH => (12, 13),
     }
 }
 
@@ -56,17 +65,26 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn consume_if(
+        &mut self,
+        token_types: &'static [TT],
+    ) -> Result<Token<'a>, ParserError> {
+        if let Some(token) = self.tokens.peek() {
+            if token_types.contains(&token.kind) {
+                Ok(self.tokens.next().expect("Unwrapping peeked value"))
+            } else {
+                Err(ParserError::unexpected_token(token, token_types))
+            }
+        } else {
+            Err(ParserError::expected_token(token_types))
+        }
+    }
+
     fn parse(&mut self) -> Result<Vec<Statement<'a>>, Vec<ParserError>> {
         let mut statments = Vec::new();
         let mut errors = Vec::new();
-        while let Some(token) = self.tokens.peek() {
-            let result = if token.kind == TT::LEFT_BRACE {
-                self.tokens.next();
-                self.block()
-            } else {
-                self.statment().map_err(|e| vec![e])
-            };
-            match result {
+        while self.tokens.peek().is_some() {
+            match self.statment() {
                 Ok(statment) => statments.push(statment),
                 Err(e) => errors.extend(e),
             }
@@ -76,6 +94,17 @@ impl<'a> Parser<'a> {
             return Err(errors);
         }
         Ok(statments)
+    }
+
+    fn statment(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
+        match self.tokens.peek() {
+            None => Err(vec![ParserError::UnexpectedEOF]),
+            Some(token) if token.kind == TT::LEFT_BRACE => {
+                self.tokens.next();
+                self.block()
+            }
+            _ => self.keyword(),
+        }
     }
 
     fn block(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
@@ -88,8 +117,8 @@ impl<'a> Parser<'a> {
                 self.block()
                     .wrap_err_with(|| "Failed generating block".to_owned())
             } else {
-                self.statment()
-                    .wrap_err_with(|| "Failed generating block".to_owned())
+                self.keyword()
+                    .wrap_err_with(|| "Failed generating line".to_owned())
             };
             match statment {
                 Ok(s) => members.push(s),
@@ -99,15 +128,8 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        if let Some(token) = self.tokens.next() {
-            if token.kind != TT::RIGHT_BRACE {
-                errors.push(ParserError::unexpected_token(
-                    &token,
-                    &[TT::RIGHT_BRACE],
-                ));
-            }
-        } else {
-            errors.push(ParserError::expected_token(&[TT::RIGHT_BRACE]));
+        if let Err(e) = self.consume_if(&[TT::RIGHT_BRACE]) {
+            errors.push(e);
         }
 
         if !errors.is_empty() {
@@ -116,30 +138,37 @@ impl<'a> Parser<'a> {
         Ok(Statement::Group(members))
     }
 
-    fn statment(&mut self) -> Result<Statement<'a>, ParserError> {
+    fn keyword(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
         let next_token =
             self.tokens.peek().ok_or(ParserError::UnexpectedEOF)?;
-        let statment = if next_token.kind == TT::VAR {
-            self.tokens.next();
-            self.declaration()?
-        } else if next_token.kind == TT::PRINT {
-            self.tokens.next();
-            self.expression(0).map(Statement::Print)?
-        } else if next_token.kind == TT::IF {
-            self.tokens.next();
-            self.if_statment()?
-        } else {
-            self.expression(0).map(Statement::Expression)?
+
+        let statment = match next_token.kind {
+            TT::VAR => {
+                self.tokens.next();
+                self.declaration()?
+            }
+            TT::PRINT => {
+                self.tokens.next();
+                self.expression(0).map(Statement::Print)?
+            }
+            TT::IF => {
+                self.tokens.next();
+                self.if_statment()?
+            }
+            TT::WHILE => {
+                self.tokens.next();
+                self.while_statment()?
+            }
+            TT::FOR => {
+                self.tokens.next();
+                self.for_statment()?
+            }
+            _ => self.expression(0).map(Statement::Expression)?,
         };
-        todo!("Extract this to it's own function instead");
-        if let Some(token) = self.tokens.peek()
-            && token.kind != TT::SEMICOLON
-        {
-            Err(ParserError::unexpected_token(token, &[TT::SEMICOLON]))
-        } else {
-            self.tokens.next();
-            Ok(statment)
+        if self.tokens.peek().is_some() {
+            self.consume_if(&[TT::SEMICOLON])?;
         }
+        Ok(statment)
     }
 
     fn declaration(&mut self) -> Result<Statement<'a>, ParserError> {
@@ -165,29 +194,81 @@ impl<'a> Parser<'a> {
         Ok(Statement::Declaration { name, expression })
     }
 
-    fn if_statment(&mut self) -> Result<Statement<'a>, ParserError> {
-        if let Some(token) = self
-            .tokens
-            .next()
-            .ok_or(ParserError::EOFWhileExpecting {
-                expected_token_types: &[TT::LEFT_BRACE],
-            })?
-            .kind
-            != TT::LEFT_BRACE
-        {
-            return Err(ParserError::unexpected_token(
-                &token,
-                &[TT::LEFT_BRACE],
-            ));
-        }
-        let condition = self.expression(0);
+    fn if_statment(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
+        self.consume_if(&[TT::LEFT_BRACE])?;
+        let condition = self.expression(0)?;
+        self.consume_if(&[TT::RIGHT_BRACE])?;
+
+        let true_branch = Box::new(self.statment()?);
+        let false_branch = match self.consume_if(&[TT::ELSE]) {
+            Ok(_) => Some(Box::new(self.statment()?)),
+            Err(_) => None,
+        };
+
+        Ok(Statement::If {
+            condition,
+            true_branch,
+            false_branch,
+        })
+    }
+
+    fn while_statment(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
+        self.consume_if(&[TT::LEFT_PAREN])?;
+        let condition = self.expression(0)?;
+        self.consume_if(&[TT::RIGHT_PAREN])?;
+
+        let body = Box::new(self.statment()?);
+        Ok(Statement::While { condition, body })
+    }
+
+    fn for_statment(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
+        trace!("For");
+        self.consume_if(&[TT::LEFT_PAREN])?;
+
+        let mut next_token =
+            self.tokens.peek().ok_or(ParserError::UnexpectedEOF)?;
+        let line = next_token.line;
+
+        let initialiser = match next_token.kind {
+            TT::SEMICOLON => None,
+            TT::VAR => {
+                self.tokens.next();
+                Some(self.declaration()?)
+            }
+            _ => Some(self.expression(0).map(Statement::Expression)?),
+        };
+        self.consume_if(&[TT::SEMICOLON])?;
+
+        next_token = self.tokens.peek().ok_or(ParserError::UnexpectedEOF)?;
+        let condition = match next_token.kind {
+            TT::SEMICOLON => None,
+            _ => Some(self.expression(0)?),
+        };
+        self.consume_if(&[TT::SEMICOLON])?;
+
+        next_token = self.tokens.peek().ok_or(ParserError::UnexpectedEOF)?;
+        let increment = match next_token.kind {
+            TT::SEMICOLON => None,
+            _ => Some(self.expression(0)?),
+        };
+        self.consume_if(&[TT::RIGHT_PAREN])?;
+
+        let body = Box::new(self.statment()?);
+
+        Ok(Statement::r#for(
+            initialiser,
+            condition,
+            increment,
+            body,
+            line,
+        ))
     }
 
     fn expression(
         &mut self,
         current_precedence: usize,
     ) -> Result<Expr<'a>, ParserError> {
-        let lhs = self.build_binary(current_precedence)?;
+        let lhs = self.build_logical(current_precedence)?;
 
         if let Some(infix) = self.tokens.peek()
             && infix.kind == TT::EQUAL
@@ -196,11 +277,7 @@ impl<'a> Parser<'a> {
             let rhs = self.expression(current_precedence)?;
 
             if let ExprKind::Identifier(name) = lhs.kind {
-                return Ok(Expr::new_assignment(
-                    name,
-                    Box::new(rhs),
-                    token.line,
-                ));
+                return Ok(Expr::assignment(name, Box::new(rhs), token.line));
             }
             return Err(ParserError::InvalidAssignmentTarget {
                 line: token.line,
@@ -210,10 +287,37 @@ impl<'a> Parser<'a> {
         Ok(lhs)
     }
 
+    pub fn build_logical(
+        &mut self,
+        current_precedence: usize,
+    ) -> Result<Expr<'a>, ParserError> {
+        trace!("Logical");
+        let mut lhs = self.build_binary(current_precedence)?;
+
+        while let Some(infix) = self
+            .tokens
+            .peek()
+            .and_then(|token| LogicalOperator::try_from(token.kind).ok())
+        {
+            let precedence = logical_precedence(infix);
+            if precedence < current_precedence {
+                break;
+            }
+            let token = self.tokens.next().expect("Retriving a peeked value");
+            let rhs = self.build_logical(precedence).wrap_err_with(|| {
+                format!("Failed reading rhs for {token:?}")
+            })?;
+            lhs =
+                Expr::logical(Box::new(lhs), infix, Box::new(rhs), token.line);
+        }
+        Ok(lhs)
+    }
+
     pub fn build_binary(
         &mut self,
         current_precedence: usize,
     ) -> Result<Expr<'a>, ParserError> {
+        trace!("Binary");
         let mut lhs = self.parse_prefix()?;
 
         while let Some(infix) = self
@@ -229,17 +333,13 @@ impl<'a> Parser<'a> {
             let rhs = self.build_binary(r_precedence).wrap_err_with(|| {
                 format!("Failed reading rhs for {token:?}")
             })?;
-            lhs = Expr::new_binary(
-                Box::new(lhs),
-                infix,
-                Box::new(rhs),
-                token.line,
-            );
+            lhs = Expr::binary(Box::new(lhs), infix, Box::new(rhs), token.line);
         }
         Ok(lhs)
     }
 
     pub fn parse_prefix(&mut self) -> Result<Expr<'a>, ParserError> {
+        trace!("Prefix");
         let token = self.tokens.next().ok_or(ParserError::UnexpectedEOF)?;
 
         if let Some(token_value) = token.token_value {
@@ -254,6 +354,9 @@ impl<'a> Parser<'a> {
             return self.build_group();
         }
 
+        // todo!(
+        //    "Error message dose not reflect that this accepts any valid value"
+        //);
         Err(ParserError::unexpected_token(
             &token,
             &[TT::BANG, TT::MINUS, TT::LEFT_PAREN],
@@ -267,22 +370,13 @@ impl<'a> Parser<'a> {
     ) -> Result<Expr<'a>, ParserError> {
         let precedence = prefix_precedence(operator);
         let expr = Box::new(self.expression(precedence)?);
-        Ok(Expr::new_unary(operator, expr, line))
+        Ok(Expr::unary(operator, expr, line))
     }
 
     fn build_group(&mut self) -> Result<Expr<'a>, ParserError> {
         let inner = self.expression(0)?;
-        let token = self
-            .tokens
-            .next()
-            .ok_or_else(|| ParserError::expected_token(&[TT::RIGHT_PAREN]))?;
-
-        match token.kind {
-            TT::RIGHT_PAREN => {
-                Ok(Expr::new_grouping(Box::new(inner), token.line))
-            }
-            _ => Err(ParserError::unexpected_token(&token, &[TT::RIGHT_PAREN])),
-        }
+        let token = self.consume_if(&[TT::RIGHT_PAREN])?;
+        Ok(Expr::grouping(Box::new(inner), token.line))
     }
 
     fn synchronise(&mut self) {
@@ -310,14 +404,12 @@ impl<'a> Parser<'a> {
 
 fn build_value(value: TV, line: usize) -> Expr {
     match value {
-        TV::String(text) => {
-            Expr::new_literal(Value::String(text.to_owned()), line)
-        }
-        TV::Number(number) => Expr::new_literal(Value::Number(number), line),
-        TV::False => Expr::new_literal(Value::Boolean(false), line),
-        TV::True => Expr::new_literal(Value::Boolean(true), line),
-        TV::Nil => Expr::new_literal(Value::Nil, line),
-        TV::Identifier(name) => Expr::new_identifier(name, line),
+        TV::String(text) => Expr::literal(Value::String(text.to_owned()), line),
+        TV::Number(number) => Expr::literal(Value::Number(number), line),
+        TV::False => Expr::literal(Value::Boolean(false), line),
+        TV::True => Expr::literal(Value::Boolean(true), line),
+        TV::Nil => Expr::literal(Value::Nil, line),
+        TV::Identifier(name) => Expr::identifier(name, line),
         TV::Comment(..) => {
             unreachable!("Shouldn't be emitted")
         }

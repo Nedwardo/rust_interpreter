@@ -41,3 +41,6 @@ infinite_loop = "warn"
 pathbuf_init_then_push = "warn"
 non_zero_suggestions = "warn"
 
+[dependencies]
+log = {version = "0.4.33", features = ["std"]}
+

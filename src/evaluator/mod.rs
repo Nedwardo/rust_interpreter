@@ -6,55 +6,95 @@ use crate::evaluator::evaluation_error::EvaluationError;
 use crate::evaluator::evaluation_error::EvaluationError::{
     UnsupportedBinaryOperand, UnsupportedUnaryOperand,
 };
+use log::trace;
 
 use crate::error_utils::StageError;
 use crate::expressions::Statement;
-use crate::expressions::{Binary, ExprKind, Unary, Value};
-use crate::expressions::{BinaryOperator, Expr, UnaryOperator};
+use crate::expressions::{
+    Binary, BinaryOperator, Expr, ExprKind, Logical, LogicalOperator, Unary,
+    UnaryOperator, Value,
+};
 
 pub fn evaluate<'a>(
     statments: &'a Vec<Statement<'a>>,
 ) -> Result<Option<Value>, Vec<impl Into<StageError> + use<'a>>> {
+    trace!("{statments:?}");
     evaluate_statments(statments, &mut Environment::new())
 }
 
 fn evaluate_statments<'a>(
     statments: &'a Vec<Statement<'a>>,
     env: &mut Environment<'a>,
-) -> Result<Option<Value>, Vec<impl Into<StageError> + use<'a>>> {
+) -> Result<Option<Value>, Vec<StageError>> {
     let mut errors = Vec::new();
     let mut result: Option<Value> = None;
     for statment in statments {
-        result = None;
-        match statment {
-            Statement::Expression(expr) => match visit(expr, env) {
-                Ok(value) => result = Some(value),
-                Err(e) => errors.push(e),
-            },
-            Statement::Print(expr) => match visit(expr, env) {
-                Ok(value) => println!("{value}"),
-                Err(e) => errors.push(e),
-            },
-            Statement::Declaration { name, expression } => match expression {
-                Some(expr) => match visit(expr, env) {
-                    Ok(value) => env.define(name, Some(value)),
-                    Err(e) => errors.push(e),
-                },
-                None => env.define(name, None),
-            },
-            Statement::Group(s) => {
-                env.narrow();
-                if let Err(e) = evaluate_statments(s, env) {
-                    errors.extend(e.into_iter());
-                }
-                env.pop_scope();
-            }
+        match eval(statment, env) {
+            Ok(value) => result = value,
+            Err(e) => errors.extend(e),
         }
     }
     if !errors.is_empty() {
         return Err(errors);
     }
     Ok(result)
+}
+
+fn eval<'a>(
+    statment: &'a Statement<'a>,
+    env: &mut Environment<'a>,
+) -> Result<Option<Value>, Vec<StageError>> {
+    match statment {
+        Statement::Expression(expr) => match visit(expr, env) {
+            Ok(value) => Ok(Some(value)),
+            Err(e) => Err(vec![e.into()]),
+        },
+        Statement::Print(expr) => match visit(expr, env) {
+            Ok(value) => {
+                println!("{value}");
+                Ok(None)
+            }
+            Err(e) => Err(vec![e.into()]),
+        },
+        Statement::Declaration { name, expression } => {
+            if let Some(expr) = expression {
+                match visit(expr, env) {
+                    Ok(value) => {
+                        env.define(name, Some(value));
+                        Ok(None)
+                    }
+                    Err(e) => Err(vec![e.into()]),
+                }
+            } else {
+                env.define(name, None);
+                Ok(None)
+            }
+        }
+        Statement::Group(s) => {
+            env.narrow();
+            evaluate_statments(s, env)?;
+            env.pop_scope();
+            Ok(None)
+        }
+        Statement::If {
+            condition,
+            true_branch,
+            false_branch,
+        } => {
+            if as_bool(&visit(condition, env).map_err(|e| vec![e.into()])?) {
+                eval(true_branch, env)?;
+            } else if let Some(branch) = false_branch {
+                eval(branch, env)?;
+            }
+            Ok(None)
+        }
+        Statement::While { condition, body } => {
+            while as_bool(&visit(condition, env).map_err(|e| vec![e.into()])?) {
+                eval(body, env)?;
+            }
+            Ok(None)
+        }
+    }
 }
 
 fn visit<'a>(
@@ -87,6 +127,7 @@ fn visit<'a>(
             })?;
             Ok(value)
         }
+        ExprKind::Logical(logical) => visit_logical(logical, env),
     }
 }
 
@@ -158,6 +199,20 @@ fn visit_binary<'a>(
         rhs_type: right_value.type_name(),
         line,
     })
+}
+
+fn visit_logical<'a>(
+    logical: &'a Logical,
+    env: &mut Environment<'a>,
+) -> Result<Value, EvaluationError<'a>> {
+    let lhs_value = visit(&logical.left, env)?;
+    let lhs_truthy = as_bool(&lhs_value);
+
+    match logical.operator {
+        LogicalOperator::OR if !lhs_truthy => visit(&logical.right, env),
+        LogicalOperator::AND if lhs_truthy => visit(&logical.right, env),
+        _ => Ok(lhs_value),
+    }
 }
 
 #[allow(clippy::float_cmp, reason = "User is trying to float cmp")]

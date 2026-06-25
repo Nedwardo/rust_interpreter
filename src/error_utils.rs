@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::fmt;
+use std::fmt::Debug;
 use std::fmt::Write as _;
 use std::fmt::{Display, Formatter};
 
@@ -51,7 +52,6 @@ impl StageError {
     }
 }
 
-#[derive(Debug)]
 pub struct FlattenedError {
     error_message: String,
 }
@@ -76,6 +76,12 @@ impl FlattenedError {
 }
 
 impl Display for FlattenedError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.error_message, f)
+    }
+}
+
+impl Debug for FlattenedError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         Display::fmt(&self.error_message, f)
     }

@@ -1,6 +1,7 @@
 mod error_utils;
 mod evaluator;
 mod expressions;
+mod logger;
 mod parser;
 mod read_file_error;
 mod scanner;
@@ -10,6 +11,8 @@ use crate::parser::parse;
 use std::fmt::Display;
 mod token_type;
 use crate::evaluator::evaluate;
+use crate::logger::init as logger_init;
+use log::LevelFilter;
 use read_file_error::ReadFileError;
 use scanner::scan;
 use std::env::args;
@@ -20,6 +23,8 @@ use std::path::Path;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = args().collect();
+
+    logger_init(LevelFilter::Info)?;
 
     match args.as_slice() {
         [_] => run_prompt(),
