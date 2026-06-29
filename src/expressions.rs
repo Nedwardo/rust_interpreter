@@ -21,6 +21,7 @@ pub enum Statement<'a> {
         condition: Expr<'a>,
         body: Box<Self>,
     },
+    Break
 }
 
 impl<'a> Statement<'a> {

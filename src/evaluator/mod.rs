@@ -25,13 +25,13 @@ pub fn evaluate<'a>(
 fn evaluate_statments<'a>(
     statments: &'a Vec<Statement<'a>>,
     env: &mut Environment<'a>,
-) -> Result<Option<Value>, Vec<StageError>> {
+) -> Result<Option<Value>, Vec<EvaluationError<'a>>> {
     let mut errors = Vec::new();
     let mut result: Option<Value> = None;
     for statment in statments {
         match eval(statment, env) {
             Ok(value) => result = value,
-            Err(e) => errors.extend(e),
+            Err(e) => errors.push(e),
         }
     }
     if !errors.is_empty() {
@@ -43,28 +43,17 @@ fn evaluate_statments<'a>(
 fn eval<'a>(
     statment: &'a Statement<'a>,
     env: &mut Environment<'a>,
-) -> Result<Option<Value>, Vec<StageError>> {
+) -> Result<Option<Value>, EvaluationError<'a>> {
     match statment {
-        Statement::Expression(expr) => match visit(expr, env) {
-            Ok(value) => Ok(Some(value)),
-            Err(e) => Err(vec![e.into()]),
-        },
-        Statement::Print(expr) => match visit(expr, env) {
-            Ok(value) => {
-                println!("{value}");
-                Ok(None)
-            }
-            Err(e) => Err(vec![e.into()]),
-        },
+        Statement::Expression(expr) => visit(expr, env).map(|v| Some(v)),
+        Statement::Print(expr) => {
+            println!("{}", visit(expr, env)?);
+            Ok(None)
+        }
         Statement::Declaration { name, expression } => {
             if let Some(expr) = expression {
-                match visit(expr, env) {
-                    Ok(value) => {
-                        env.define(name, Some(value));
-                        Ok(None)
-                    }
-                    Err(e) => Err(vec![e.into()]),
-                }
+                env.define(name, Some(visit(expr, env)?));
+                Ok(None)
             } else {
                 env.define(name, None);
                 Ok(None)
@@ -72,7 +61,8 @@ fn eval<'a>(
         }
         Statement::Group(s) => {
             env.narrow();
-            evaluate_statments(s, env)?;
+            evaluate_statments(s, env)
+                .map_err(|e| EvaluationError::GroupErrors(e))?;
             env.pop_scope();
             Ok(None)
         }
@@ -81,7 +71,7 @@ fn eval<'a>(
             true_branch,
             false_branch,
         } => {
-            if as_bool(&visit(condition, env).map_err(|e| vec![e.into()])?) {
+            if as_bool(&visit(condition, env)?) {
                 eval(true_branch, env)?;
             } else if let Some(branch) = false_branch {
                 eval(branch, env)?;
@@ -89,11 +79,14 @@ fn eval<'a>(
             Ok(None)
         }
         Statement::While { condition, body } => {
-            while as_bool(&visit(condition, env).map_err(|e| vec![e.into()])?) {
+            while as_bool(&visit(condition, env)?) {
                 eval(body, env)?;
             }
             Ok(None)
         }
+        Statement::Break => todo!(
+            "Implement break statment (throw custom error to be caught by while case"
+        ),
     }
 }
 

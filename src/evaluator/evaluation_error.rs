@@ -23,6 +23,7 @@ pub enum EvaluationError<'a> {
         name: &'a str,
         line: usize,
     },
+    GroupErrors(Vec<Self>),
 }
 
 impl<'a> From<EvaluationError<'a>> for StageError {
