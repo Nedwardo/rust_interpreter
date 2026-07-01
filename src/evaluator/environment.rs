@@ -41,7 +41,7 @@ impl<'a> Environment<'a> {
         Err(())
     }
 
-    pub fn get(&self, name: &str) -> Option<&Option<Value>> {
+    pub fn get(&self, name: &str) -> Option<&Option<Value<'a>>> {
         for scope in self.scopes.iter().rev() {
             if scope.contains_key(name) {
                 return scope.get(name);

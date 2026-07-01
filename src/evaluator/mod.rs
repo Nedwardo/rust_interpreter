@@ -17,14 +17,14 @@ use crate::expressions::{
 };
 
 pub fn evaluate<'a>(
-    statments: &'a Vec<Statement<'a>>,
+    statments: &Vec<Statement<'a>>,
 ) -> Result<Option<Value<'a>>, Vec<impl Into<StageError> + use<'a>>> {
     trace!("{statments:?}");
     evaluate_statments(statments, &mut Environment::new())
 }
 
 fn evaluate_statments<'a>(
-    statments: &'a Vec<Statement<'a>>,
+    statments: &Vec<Statement<'a>>,
     env: &mut Environment<'a>,
 ) -> Result<Option<Value<'a>>, Vec<EvaluationError<'a>>> {
     let mut errors = Vec::new();
@@ -42,7 +42,7 @@ fn evaluate_statments<'a>(
 }
 
 fn eval<'a>(
-    statment: &'a Statement<'a>,
+    statment: &Statement<'a>,
     env: &mut Environment<'a>,
 ) -> Result<Option<Value<'a>>, EvaluationError<'a>> {
     match statment {
@@ -88,8 +88,8 @@ fn eval<'a>(
 }
 
 fn visit<'a>(
-    expr: &'a Expr<'a>,
-    env: &'a mut Environment<'a>,
+    expr: &Expr<'a>,
+    env: &mut Environment<'a>,
 ) -> Result<Value<'a>, EvaluationError<'a>> {
     match &expr.kind {
         ExprKind::Literal(value) => Ok(value.clone()),
@@ -123,7 +123,7 @@ fn visit<'a>(
 }
 
 fn visit_unary<'a>(
-    unary: &'a Unary,
+    unary: &Unary<'a>,
     line: usize,
     env: &mut Environment<'a>,
 ) -> Result<Value<'a>, EvaluationError<'a>> {
@@ -147,7 +147,7 @@ fn visit_unary<'a>(
     reason = "Do not want to modify the original string inplace"
 )]
 fn visit_binary<'a>(
-    binary: &'a Binary,
+    binary: &Binary<'a>,
     line: usize,
     env: &mut Environment<'a>,
 ) -> Result<Value<'a>, EvaluationError<'a>> {
@@ -193,7 +193,7 @@ fn visit_binary<'a>(
 }
 
 fn visit_logical<'a>(
-    logical: &'a Logical,
+    logical: &Logical<'a>,
     env: &mut Environment<'a>,
 ) -> Result<Value<'a>, EvaluationError<'a>> {
     let lhs_value = visit(&logical.left, env)?;
@@ -207,7 +207,7 @@ fn visit_logical<'a>(
 }
 
 fn visit_call<'a>(
-    call: &'a Call<'a>,
+    call: &Call<'a>,
     line: usize,
     env: &mut Environment<'a>,
 ) -> Result<Value<'a>, EvaluationError<'a>> {
@@ -245,7 +245,7 @@ pub const fn as_bool(value: &Value) -> bool {
 }
 
 #[allow(clippy::float_cmp, reason = "User is trying to float cmp")]
-fn is_equal<'a>(left_value: &Value<'a>, right_value: &Value) -> bool {
+fn is_equal(left_value: &Value, right_value: &Value) -> bool {
     match left_value {
         Value::String(lhs) => {
             if let Value::String(rhs) = right_value {

@@ -53,9 +53,9 @@ pub struct Parser<'a> {
     loop_depth: usize,
 }
 
-pub fn parse<'a>(
-    tokens: Vec<Token<'a>>,
-) -> Result<Vec<Statement<'a>>, Vec<impl Into<StageError> + use<'a>>> {
+pub fn parse(
+    tokens: Vec<Token>,
+) -> Result<Vec<Statement>, Vec<impl Into<StageError> + use<>>> {
     Parser::new(tokens).parse()
 }
 

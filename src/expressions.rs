@@ -220,7 +220,7 @@ impl<'a> Expr<'a> {
     }
 }
 
-impl<'a> Display for Value<'a> {
+impl Display for Value<'_> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Self::String(..) => write!(f, "\"{}\"", self.cast_to_string()),
@@ -229,7 +229,7 @@ impl<'a> Display for Value<'a> {
     }
 }
 
-impl<'a> Value<'a> {
+impl Value<'_> {
     pub const fn type_name(&self) -> &'static str {
         match self {
             Self::String(..) => "String",
