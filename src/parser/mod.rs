@@ -50,11 +50,12 @@ impl<'a> Iterator for TokenIter<'a> {
 
 pub struct Parser<'a> {
     tokens: Peekable<TokenIter<'a>>,
+    loop_depth: usize,
 }
 
-pub fn parse(
-    tokens: Vec<Token>,
-) -> Result<Vec<Statement>, Vec<impl Into<StageError>>> {
+pub fn parse<'a>(
+    tokens: Vec<Token<'a>>,
+) -> Result<Vec<Statement<'a>>, Vec<impl Into<StageError> + use<'a>>> {
     Parser::new(tokens).parse()
 }
 
@@ -62,6 +63,7 @@ impl<'a> Parser<'a> {
     pub fn new(tokens: Vec<Token<'a>>) -> Self {
         Parser {
             tokens: TokenIter(tokens.into_iter()).peekable(),
+            loop_depth: 0,
         }
     }
 
@@ -163,6 +165,15 @@ impl<'a> Parser<'a> {
                 self.tokens.next();
                 self.for_statment()?
             }
+            TT::BREAK => {
+                if self.loop_depth != 0 {
+                    return Err(vec![ParserError::unexpected_token(
+                        &self.tokens.next().expect("Unwrapping a peeked value"),
+                        &[],
+                    )]);
+                }
+                Statement::Break
+            }
             _ => self.expression(0).map(Statement::Expression)?,
         };
         if self.tokens.peek().is_some() {
@@ -217,7 +228,10 @@ impl<'a> Parser<'a> {
         let condition = self.expression(0)?;
         self.consume_if(&[TT::RIGHT_PAREN])?;
 
+        self.loop_depth += 1;
         let body = Box::new(self.statment()?);
+        self.loop_depth -= 1;
+
         Ok(Statement::While { condition, body })
     }
 
@@ -343,7 +357,18 @@ impl<'a> Parser<'a> {
         let token = self.tokens.next().ok_or(ParserError::UnexpectedEOF)?;
 
         if let Some(token_value) = token.token_value {
-            return Ok(build_value(token_value, token.line));
+            let mut expr = build_value(token_value, token.line);
+
+            loop {
+                if let Some(token) = self.tokens.peek()
+                    && matches!(token.kind, TT::LEFT_PAREN)
+                {
+                    self.tokens.next();
+                    expr = self.build_call(expr)?;
+                } else {
+                    break;
+                }
+            }
         }
 
         if let Ok(unary_op) = UnaryOperator::try_from(token.kind) {
@@ -377,6 +402,32 @@ impl<'a> Parser<'a> {
         let inner = self.expression(0)?;
         let token = self.consume_if(&[TT::RIGHT_PAREN])?;
         Ok(Expr::grouping(Box::new(inner), token.line))
+    }
+
+    fn build_call(
+        &mut self,
+        callee: Expr<'a>,
+    ) -> Result<Expr<'a>, ParserError> {
+        let mut arguments = Vec::new();
+
+        loop {
+            arguments.push(self.expression(0)?);
+            if arguments.len() >= 255 {
+                return Err(ParserError::TooManyArguments {
+                    line: arguments[arguments.len() - 1].line,
+                });
+                todo!(
+                    "This needs to report the error, but not go into panic mode???"
+                );
+            }
+            if self.consume_if(&[TT::COMMA]).is_err() {
+                break;
+            }
+        }
+
+        self.consume_if(&[TT::RIGHT_PAREN])?;
+
+        Ok(Expr::call(Box::new(callee), arguments))
     }
 
     fn synchronise(&mut self) {

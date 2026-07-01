@@ -54,6 +54,7 @@ pub enum TokenType {
     TRUE,
     VAR,
     WHILE,
+    BREAK,
 
     COMMENT,
 }
@@ -79,6 +80,7 @@ impl TokenType {
             "true" => Some(TRUE),
             "var" => Some(VAR),
             "while" => Some(WHILE),
+            "break" => Some(BREAK),
             _ => None,
         }
     }
@@ -131,6 +133,7 @@ impl Display for TokenType {
             TRUE => "true",
             VAR => "var",
             WHILE => "while",
+            BREAK => "break",
         };
         write!(f, "{output}")
     }

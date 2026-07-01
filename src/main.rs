@@ -63,7 +63,9 @@ fn run_prompt() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn run(file: &str) -> Result<Option<impl Display>, Box<dyn Error>> {
+fn run<'a>(
+    file: &'a str,
+) -> Result<Option<impl Display + use<'a>>, Box<dyn Error>> {
     let tokens = scan(file).map_err(Box::new)?;
     let statments = parse(tokens)
         .map_err(|err| Box::new(FlattenedError::flatten(err, file)))?;

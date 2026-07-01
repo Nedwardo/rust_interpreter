@@ -3,7 +3,7 @@ use crate::token_type::operator_subset;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Statement<'a> {
     Declaration {
         name: &'a str,
@@ -21,7 +21,7 @@ pub enum Statement<'a> {
         condition: Expr<'a>,
         body: Box<Self>,
     },
-    Break
+    Break,
 }
 
 impl<'a> Statement<'a> {
@@ -53,55 +53,69 @@ impl<'a> Statement<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Expr<'a> {
     pub line: usize,
     pub kind: ExprKind<'a>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum ExprKind<'a> {
-    Literal(Value),
+    Literal(Value<'a>),
     Identifier(&'a str),
     Unary(Unary<'a>),
     Grouping(Box<Expr<'a>>),
     Binary(Binary<'a>),
     Assignment(Assignment<'a>),
     Logical(Logical<'a>),
+    Call(Call<'a>),
 }
 
 #[derive(Clone, Debug)]
-pub enum Value {
+pub enum Value<'a> {
+    Function(Function<'a>),
     String(String),
     Number(f64),
     Boolean(bool),
     Nil,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Assignment<'a> {
     pub name: &'a str,
     pub expr: Box<Expr<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Unary<'a> {
     pub operator: UnaryOperator,
     pub expr: Box<Expr<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Binary<'a> {
     pub left: Box<Expr<'a>>,
     pub operator: BinaryOperator,
     pub right: Box<Expr<'a>>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Logical<'a> {
     pub left: Box<Expr<'a>>,
     pub operator: LogicalOperator,
     pub right: Box<Expr<'a>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Call<'a> {
+    pub callee: Box<Expr<'a>>,
+    pub arguments: Vec<Expr<'a>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Function<'a> {
+    pub body: Box<Statement<'a>>,
+    pub arity: usize,
 }
 
 operator_subset!(UnaryOperator, {MINUS, BANG});
@@ -166,7 +180,7 @@ impl<'a> Expr<'a> {
         }
     }
 
-    pub const fn literal(value: Value, line: usize) -> Self {
+    pub const fn literal(value: Value<'a>, line: usize) -> Self {
         Expr {
             line,
             kind: ExprKind::Literal(value),
@@ -197,9 +211,16 @@ impl<'a> Expr<'a> {
             kind: ExprKind::Assignment(Assignment { name, expr }),
         }
     }
+
+    pub const fn call(callee: Box<Self>, arguments: Vec<Self>) -> Self {
+        Expr {
+            line: callee.line,
+            kind: ExprKind::Call(Call { callee, arguments }),
+        }
+    }
 }
 
-impl Display for Value {
+impl<'a> Display for Value<'a> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Self::String(..) => write!(f, "\"{}\"", self.cast_to_string()),
@@ -208,13 +229,14 @@ impl Display for Value {
     }
 }
 
-impl Value {
+impl<'a> Value<'a> {
     pub const fn type_name(&self) -> &'static str {
         match self {
             Self::String(..) => "String",
             Self::Number(..) => "Number",
             Self::Boolean(..) => "Boolean",
             Self::Nil => "nil",
+            Self::Function(..) => "Function",
         }
     }
 
@@ -224,6 +246,7 @@ impl Value {
             Self::Number(value) => format!("{value}"),
             Self::Boolean(value) => format!("{value}"),
             Self::Nil => "nil".to_owned(),
+            Self::Function(..) => "Function".to_owned(),
         }
     }
 }

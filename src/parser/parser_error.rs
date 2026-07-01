@@ -22,6 +22,9 @@ pub enum ParserError {
         error_message: String,
         source: Vec<Self>,
     },
+    TooManyArguments {
+        line: usize,
+    },
 }
 
 impl ParserError {
@@ -142,6 +145,13 @@ impl From<ParserError> for StageError {
                 error_location: None,
                 stage: "parsing",
                 children: source.iter().map(|e| e.clone().into()).collect(),
+            },
+            ParserError::TooManyArguments { line } => Self {
+                line: Some(line),
+                message: "Can't have more than 255 arguments.".to_owned(),
+                error_location: None,
+                stage: "Parsing",
+                children: Vec::new(),
             },
         }
     }

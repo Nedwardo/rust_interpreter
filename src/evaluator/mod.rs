@@ -4,6 +4,7 @@ pub mod evaluation_error;
 use crate::evaluator::environment::Environment;
 use crate::evaluator::evaluation_error::EvaluationError;
 use crate::evaluator::evaluation_error::EvaluationError::{
+    Break, GroupErrors, UndefinedVariable, UnitialisedVariable,
     UnsupportedBinaryOperand, UnsupportedUnaryOperand,
 };
 use log::trace;
@@ -11,13 +12,13 @@ use log::trace;
 use crate::error_utils::StageError;
 use crate::expressions::Statement;
 use crate::expressions::{
-    Binary, BinaryOperator, Expr, ExprKind, Logical, LogicalOperator, Unary,
-    UnaryOperator, Value,
+    Binary, BinaryOperator, Call, Expr, ExprKind, Logical, LogicalOperator,
+    Unary, UnaryOperator, Value,
 };
 
 pub fn evaluate<'a>(
     statments: &'a Vec<Statement<'a>>,
-) -> Result<Option<Value>, Vec<impl Into<StageError> + use<'a>>> {
+) -> Result<Option<Value<'a>>, Vec<impl Into<StageError> + use<'a>>> {
     trace!("{statments:?}");
     evaluate_statments(statments, &mut Environment::new())
 }
@@ -25,9 +26,9 @@ pub fn evaluate<'a>(
 fn evaluate_statments<'a>(
     statments: &'a Vec<Statement<'a>>,
     env: &mut Environment<'a>,
-) -> Result<Option<Value>, Vec<EvaluationError<'a>>> {
+) -> Result<Option<Value<'a>>, Vec<EvaluationError<'a>>> {
     let mut errors = Vec::new();
-    let mut result: Option<Value> = None;
+    let mut result: Option<Value<'a>> = None;
     for statment in statments {
         match eval(statment, env) {
             Ok(value) => result = value,
@@ -43,28 +44,22 @@ fn evaluate_statments<'a>(
 fn eval<'a>(
     statment: &'a Statement<'a>,
     env: &mut Environment<'a>,
-) -> Result<Option<Value>, EvaluationError<'a>> {
+) -> Result<Option<Value<'a>>, EvaluationError<'a>> {
     match statment {
-        Statement::Expression(expr) => visit(expr, env).map(|v| Some(v)),
-        Statement::Print(expr) => {
-            println!("{}", visit(expr, env)?);
-            Ok(None)
-        }
+        Statement::Expression(expr) => return visit(expr, env).map(Some),
+        Statement::Print(expr) => println!("{}", visit(expr, env)?),
         Statement::Declaration { name, expression } => {
             if let Some(expr) = expression {
-                env.define(name, Some(visit(expr, env)?));
-                Ok(None)
+                let value = Some(visit(expr, env)?);
+                env.define(name, value);
             } else {
                 env.define(name, None);
-                Ok(None)
             }
         }
         Statement::Group(s) => {
             env.narrow();
-            evaluate_statments(s, env)
-                .map_err(|e| EvaluationError::GroupErrors(e))?;
+            evaluate_statments(s, env).map_err(GroupErrors)?;
             env.pop_scope();
-            Ok(None)
         }
         Statement::If {
             condition,
@@ -76,24 +71,26 @@ fn eval<'a>(
             } else if let Some(branch) = false_branch {
                 eval(branch, env)?;
             }
-            Ok(None)
         }
         Statement::While { condition, body } => {
             while as_bool(&visit(condition, env)?) {
-                eval(body, env)?;
+                let result = eval(body, env);
+                match result {
+                    Err(Break) => return Ok(None),
+                    Err(e) => return Err(e),
+                    _ => {}
+                }
             }
-            Ok(None)
         }
-        Statement::Break => todo!(
-            "Implement break statment (throw custom error to be caught by while case"
-        ),
+        Statement::Break => return Err(Break),
     }
+    Ok(None)
 }
 
 fn visit<'a>(
     expr: &'a Expr<'a>,
-    env: &mut Environment<'a>,
-) -> Result<Value, EvaluationError<'a>> {
+    env: &'a mut Environment<'a>,
+) -> Result<Value<'a>, EvaluationError<'a>> {
     match &expr.kind {
         ExprKind::Literal(value) => Ok(value.clone()),
         ExprKind::Unary(unary) => visit_unary(unary, expr.line, env),
@@ -102,18 +99,18 @@ fn visit<'a>(
         ExprKind::Identifier(name) => env
             .get(name)
             .cloned()
-            .ok_or(EvaluationError::UndefinedVariable {
+            .ok_or(UndefinedVariable {
                 name,
                 line: expr.line,
             })?
-            .ok_or(EvaluationError::UnitialisedVariable {
+            .ok_or(UnitialisedVariable {
                 name,
                 line: expr.line,
             }),
         ExprKind::Assignment(assignment) => {
             let value = visit(&assignment.expr, env)?;
             env.update(assignment.name, value.clone()).map_err(|()| {
-                EvaluationError::UndefinedVariable {
+                UndefinedVariable {
                     name: assignment.name,
                     line: expr.line,
                 }
@@ -121,6 +118,7 @@ fn visit<'a>(
             Ok(value)
         }
         ExprKind::Logical(logical) => visit_logical(logical, env),
+        ExprKind::Call(call) => visit_call(call, expr.line, env),
     }
 }
 
@@ -128,7 +126,7 @@ fn visit_unary<'a>(
     unary: &'a Unary,
     line: usize,
     env: &mut Environment<'a>,
-) -> Result<Value, EvaluationError<'a>> {
+) -> Result<Value<'a>, EvaluationError<'a>> {
     let value = visit(&unary.expr, env)?;
 
     match unary.operator {
@@ -152,7 +150,7 @@ fn visit_binary<'a>(
     binary: &'a Binary,
     line: usize,
     env: &mut Environment<'a>,
-) -> Result<Value, EvaluationError<'a>> {
+) -> Result<Value<'a>, EvaluationError<'a>> {
     let left_value = visit(&binary.left, env)?;
     let right_value = visit(&binary.right, env)?;
 
@@ -197,7 +195,7 @@ fn visit_binary<'a>(
 fn visit_logical<'a>(
     logical: &'a Logical,
     env: &mut Environment<'a>,
-) -> Result<Value, EvaluationError<'a>> {
+) -> Result<Value<'a>, EvaluationError<'a>> {
     let lhs_value = visit(&logical.left, env)?;
     let lhs_truthy = as_bool(&lhs_value);
 
@@ -208,12 +206,20 @@ fn visit_logical<'a>(
     }
 }
 
+fn visit_call<'a>(
+    call: &'a Call<'a>,
+    line: usize,
+    env: &mut Environment<'a>,
+) -> Result<Value<'a>, EvaluationError<'a>> {
+    todo!("Implement")
+}
+
 #[allow(clippy::float_cmp, reason = "User is trying to float cmp")]
-fn numeric_binary_operations(
+fn numeric_binary_operations<'a>(
     lhs: f64,
     operator: BinaryOperator,
     rhs: f64,
-) -> Option<Value> {
+) -> Option<Value<'a>> {
     let result = match operator {
         BinaryOperator::MINUS => Value::Number(lhs - rhs),
         BinaryOperator::SLASH => Value::Number(lhs / rhs),
@@ -239,7 +245,7 @@ pub const fn as_bool(value: &Value) -> bool {
 }
 
 #[allow(clippy::float_cmp, reason = "User is trying to float cmp")]
-fn is_equal(left_value: &Value, right_value: &Value) -> bool {
+fn is_equal<'a>(left_value: &Value<'a>, right_value: &Value) -> bool {
     match left_value {
         Value::String(lhs) => {
             if let Value::String(rhs) = right_value {
@@ -259,6 +265,7 @@ fn is_equal(left_value: &Value, right_value: &Value) -> bool {
         Value::Nil => {
             return matches!(*right_value, Value::Nil);
         }
+        Value::Function(..) => return false,
     }
     false
 }

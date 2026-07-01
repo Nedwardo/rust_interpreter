@@ -24,6 +24,7 @@ pub enum EvaluationError<'a> {
         line: usize,
     },
     GroupErrors(Vec<Self>),
+    Break,
 }
 
 impl<'a> From<EvaluationError<'a>> for StageError {
@@ -74,6 +75,16 @@ impl<'a> From<EvaluationError<'a>> for StageError {
                 stage: "parsing",
                 children: Vec::new(),
             },
+            EvaluationError::GroupErrors(errors) => Self {
+                line: None,
+                message: "Error while parsing group".to_owned(),
+                error_location: None,
+                stage: "parsing",
+                children: errors.into_iter().map(Into::into).collect(),
+            },
+            EvaluationError::Break => unreachable!(
+                "Parser should prevent break from being returned as an error"
+            ),
         }
     }
 }
