@@ -211,6 +211,12 @@ fn visit_call<'a>(
     line: usize,
     env: &mut Environment<'a>,
 ) -> Result<Value<'a>, EvaluationError<'a>> {
+    let func = if let Function(call.callee) = call.callee {
+        func
+    } else {
+        return Err()
+    }
+    
     todo!("Implement")
 }
 

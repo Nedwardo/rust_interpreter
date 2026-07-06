@@ -24,6 +24,14 @@ pub enum EvaluationError<'a> {
         line: usize,
     },
     GroupErrors(Vec<Self>),
+    NonFunctionCalled {
+        line: usize,
+    },
+    IncorrectArgumentCount {
+        line: usize,
+        expected_arguments: usize,
+        recieved_arguments_count: usize,
+    },
     Break,
 }
 
@@ -41,7 +49,7 @@ impl<'a> From<EvaluationError<'a>> for StageError {
                     "Line {line}\nEvaluation Error: Unsupported operand type for {operator}: '{lhs_type}' and '{rhs_type}'"
                 ),
                 error_location: None,
-                stage: "parsing",
+                stage: "evaulation",
                 children: Vec::new(),
             },
             EvaluationError::UnsupportedUnaryOperand {
@@ -54,7 +62,7 @@ impl<'a> From<EvaluationError<'a>> for StageError {
                     "Line {line}\n Evaluation Error: Bad operand type for unary {operator}: '{expr_type}'"
                 ),
                 error_location: None,
-                stage: "parsing",
+                stage: "evaulation",
                 children: Vec::new(),
             },
             EvaluationError::UndefinedVariable { name, line } => Self {
@@ -63,7 +71,7 @@ impl<'a> From<EvaluationError<'a>> for StageError {
                     "Line {line}\n Evaluation Error: Variable {name} is not defined"
                 ),
                 error_location: Some(name.to_owned()),
-                stage: "parsing",
+                stage: "evaulation",
                 children: Vec::new(),
             },
             EvaluationError::UnitialisedVariable { name, line } => Self {
@@ -72,7 +80,7 @@ impl<'a> From<EvaluationError<'a>> for StageError {
                     "Line {line}\n Evaluation Error: Variable {name} is not initalised"
                 ),
                 error_location: Some(name.to_owned()),
-                stage: "parsing",
+                stage: "evaulation",
                 children: Vec::new(),
             },
             EvaluationError::GroupErrors(errors) => Self {
@@ -85,6 +93,26 @@ impl<'a> From<EvaluationError<'a>> for StageError {
             EvaluationError::Break => unreachable!(
                 "Parser should prevent break from being returned as an error"
             ),
+            EvaluationError::NonFunctionCalled { line } => Self {
+                line: Some(line),
+                message: "Can only call functions and classes".to_owned(),
+                error_location: None,
+                stage: "evaluation",
+                children: Vec::new(),
+            },
+            EvaluationError::IncorrectArgumentCount {
+                line,
+                expected_arguments,
+                recieved_arguments_count,
+            } => Self {
+                line: Some(line),
+                message: format!(
+                    "Expected {expected_arguments} arguments, but got {recieved_arguments_count}."
+                ),
+                error_location: None,
+                stage: "evaluation",
+                children: Vec::new(),
+            },
         }
     }
 }
