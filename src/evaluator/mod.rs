@@ -10,11 +10,11 @@ use crate::evaluator::evaluation_error::EvaluationError::{
 use log::trace;
 
 use crate::error_utils::StageError;
-use crate::expressions::Statement;
 use crate::expressions::{
     Binary, BinaryOperator, Call, Expr, ExprKind, Logical, LogicalOperator,
     Unary, UnaryOperator, Value,
 };
+use crate::expressions::{Function, FunctionKind, Statement};
 
 pub fn evaluate<'a>(
     statments: &Vec<Statement<'a>>,
@@ -118,7 +118,8 @@ fn visit<'a>(
             Ok(value)
         }
         ExprKind::Logical(logical) => visit_logical(logical, env),
-        ExprKind::Call(call) => visit_call(call, expr.line, env),
+        ExprKind::Call(call) => visit_call(call, expr.line, env)
+            .map(|value| value.unwrap_or(Value::Nil)),
     }
 }
 
@@ -210,14 +211,33 @@ fn visit_call<'a>(
     call: &Call<'a>,
     line: usize,
     env: &mut Environment<'a>,
-) -> Result<Value<'a>, EvaluationError<'a>> {
-    let func = if let Function(call.callee) = call.callee {
-        func
-    } else {
-        return Err()
+) -> Result<Option<Value<'a>>, EvaluationError<'a>> {
+    match & call.callee.kind {
+    let mut arguments: Vec<Value<'a>> =
+        Vec::with_capacity(call.arguments.len());
+    for arg in &call.arguments {
+        arguments.push(visit(arg, env)?);
     }
-    
-    todo!("Implement")
+    match &call.callee.kind {
+        ExprKind::Literal(Value::Function(Function { body, params })) => {
+            match body {
+                FunctionKind::Lox(statement) => {
+                    env.narrow();
+                    for index in 0..params.len() {
+                        env.define(
+                            params[index],
+                            Some(arguments[index].clone()),
+                        );
+                    }
+                    let result = eval(statement, env);
+                    env.pop_scope();
+                    result
+                }
+                FunctionKind::Rust(function) => Ok(function(arguments)),
+            }
+        }
+        _ => todo!("Write some errors for this"),
+    }
 }
 
 #[allow(clippy::float_cmp, reason = "User is trying to float cmp")]

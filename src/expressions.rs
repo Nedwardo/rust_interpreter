@@ -114,8 +114,20 @@ pub struct Call<'a> {
 
 #[derive(Clone, Debug)]
 pub struct Function<'a> {
-    pub body: Box<Statement<'a>>,
-    pub arity: usize,
+    pub body: FunctionKind<'a>,
+    pub params: Vec<&'a str>,
+}
+
+#[derive(Clone, Debug)]
+pub enum FunctionKind<'a> {
+    Lox(Box<Statement<'a>>),
+    Rust(fn(Vec<Value<'a>>) -> Option<Value<'a>>),
+}
+
+impl Function<'_> {
+    const fn arity(&self) -> usize {
+        self.params.len()
+    }
 }
 
 operator_subset!(UnaryOperator, {MINUS, BANG});
