@@ -1,5 +1,6 @@
 mod environment;
 pub mod evaluation_error;
+mod globals;
 
 use crate::evaluator::environment::Environment;
 use crate::evaluator::evaluation_error::EvaluationError;
@@ -212,31 +213,36 @@ fn visit_call<'a>(
     line: usize,
     env: &mut Environment<'a>,
 ) -> Result<Option<Value<'a>>, EvaluationError<'a>> {
-    match & call.callee.kind {
-    let mut arguments: Vec<Value<'a>> =
-        Vec::with_capacity(call.arguments.len());
-    for arg in &call.arguments {
-        arguments.push(visit(arg, env)?);
+    let ExprKind::Literal(Value::Function(Function { body, params })) =
+        &call.callee.kind
+    else {
+        return Err(EvaluationError::NonFunctionCalled { line });
+    };
+    if call.arguments.len() != params.len() {
+        return Err(EvaluationError::IncorrectArgumentCount {
+            line,
+            expected_arguments: params.len(),
+            recieved_arguments_count: call.arguments.len(),
+        });
     }
-    match &call.callee.kind {
-        ExprKind::Literal(Value::Function(Function { body, params })) => {
-            match body {
-                FunctionKind::Lox(statement) => {
-                    env.narrow();
-                    for index in 0..params.len() {
-                        env.define(
-                            params[index],
-                            Some(arguments[index].clone()),
-                        );
-                    }
-                    let result = eval(statement, env);
-                    env.pop_scope();
-                    result
-                }
-                FunctionKind::Rust(function) => Ok(function(arguments)),
+
+    let arguments: Vec<Value<'a>> = call
+        .arguments
+        .iter()
+        .map(|arg| visit(arg, env))
+        .collect::<Result<_, _>>()?;
+
+    match body {
+        FunctionKind::Lox(statement) => {
+            env.narrow();
+            for index in 0..params.len() {
+                env.define(params[index], Some(arguments[index].clone()));
             }
+            let result = eval(statement, env);
+            env.pop_scope();
+            result
         }
-        _ => todo!("Write some errors for this"),
+        FunctionKind::Rust(function) => Ok(function(arguments)),
     }
 }
 

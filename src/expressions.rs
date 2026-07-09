@@ -124,12 +124,6 @@ pub enum FunctionKind<'a> {
     Rust(fn(Vec<Value<'a>>) -> Option<Value<'a>>),
 }
 
-impl Function<'_> {
-    const fn arity(&self) -> usize {
-        self.params.len()
-    }
-}
-
 operator_subset!(UnaryOperator, {MINUS, BANG});
 operator_subset!(BinaryOperator, {
     MINUS,

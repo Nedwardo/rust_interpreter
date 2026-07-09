@@ -105,6 +105,10 @@ impl<'a> Parser<'a> {
                 self.tokens.next();
                 self.block()
             }
+            Some(token) if token.kind == TT::FUN => {
+                self.tokens.next();
+                self.function()
+            }
             _ => self.keyword(),
         }
     }
@@ -139,6 +143,8 @@ impl<'a> Parser<'a> {
         }
         Ok(Statement::Group(members))
     }
+
+    fn function(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {}
 
     fn keyword(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
         let next_token =

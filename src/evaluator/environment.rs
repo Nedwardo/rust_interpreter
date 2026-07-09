@@ -1,3 +1,4 @@
+use crate::evaluator::globals::define_globals;
 use crate::expressions::Value;
 use std::collections::HashMap;
 
@@ -7,9 +8,11 @@ pub struct Environment<'a> {
 
 impl<'a> Environment<'a> {
     pub fn new() -> Self {
-        Environment {
+        let mut env = Environment {
             scopes: vec![HashMap::new()],
-        }
+        };
+        define_globals(&mut env);
+        env
     }
 
     pub fn narrow(&mut self) {
@@ -48,5 +51,12 @@ impl<'a> Environment<'a> {
             }
         }
         None
+    }
+
+    pub fn add_global(&mut self, name: &'a str, value: Value<'a>) {
+        self.scopes
+            .first_mut()
+            .expect("One hashmap should initalised at all times")
+            .insert(name, Some(value));
     }
 }
