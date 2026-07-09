@@ -213,8 +213,11 @@ fn visit_call<'a>(
     line: usize,
     env: &mut Environment<'a>,
 ) -> Result<Option<Value<'a>>, EvaluationError<'a>> {
-    let ExprKind::Literal(Value::Function(Function { body, params })) =
-        &call.callee.kind
+    let ExprKind::Literal(Value::Function(Function {
+        body,
+        params,
+        name: _,
+    })) = &call.callee.kind
     else {
         return Err(EvaluationError::NonFunctionCalled { line });
     };

@@ -11,6 +11,7 @@ pub fn define_globals(scope: &mut Environment<'_>) {
         Value::Function(Function {
             body: FunctionKind::Rust(clock),
             params: vec![],
+            name: "clock",
         }),
     );
 }

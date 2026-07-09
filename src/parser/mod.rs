@@ -82,6 +82,17 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn consume_name(&mut self) -> Result<&'a str, ParserError> {
+        let token = self.consume_if(&[TT::IDENTIFIER])?;
+        let Some(TV::Identifier(name)) = token.token_value else {
+            return Err(ParserError::unexpected_token(
+                &token,
+                &[TT::IDENTIFIER],
+            ));
+        };
+        Ok(name)
+    }
+
     fn parse(&mut self) -> Result<Vec<Statement<'a>>, Vec<ParserError>> {
         let mut statments = Vec::new();
         let mut errors = Vec::new();
@@ -144,7 +155,30 @@ impl<'a> Parser<'a> {
         Ok(Statement::Group(members))
     }
 
-    fn function(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {}
+    fn function(
+        &mut self,
+        line: usize,
+    ) -> Result<Statement<'a>, Vec<ParserError>> {
+        let name = self.consume_name();
+        self.consume_if(&[TT::LEFT_PAREN])?;
+
+        let params = vec![];
+        while let param = self.consume_name()? {
+            params.push(param);
+            if params.len() >= 255 {
+                return Err(vec![ParserError::TooManyArguments { line }]);
+            }
+            if self.consume_if(&[TT::COMMA]).is_err() {
+                break;
+            }
+        }
+
+        self.consume_if(&[TT::RIGHT_PAREN])?;
+        self.consume_if(&[TT::LEFT_BRACE])?;
+        let body = self.block();
+
+        return Token::function(name, params, body, line);
+    }
 
     fn keyword(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
         let next_token =
@@ -189,18 +223,7 @@ impl<'a> Parser<'a> {
     }
 
     fn declaration(&mut self) -> Result<Statement<'a>, ParserError> {
-        let token =
-            self.tokens.next().ok_or(ParserError::EOFWhileExpecting {
-                expected_token_types: &[TT::IDENTIFIER],
-            })?;
-
-        let Some(TV::Identifier(name)) = token.token_value else {
-            return Err(ParserError::unexpected_token(
-                &token,
-                &[TT::IDENTIFIER],
-            ));
-        };
-
+        let name = self.consume_name()?;
         let expression =
             if self.tokens.peek().is_some_and(|t| t.kind == TT::EQUAL) {
                 self.tokens.next();

@@ -21,6 +21,11 @@ pub enum Statement<'a> {
         condition: Expr<'a>,
         body: Box<Self>,
     },
+    Function {
+        name: &'a str,
+        params: Vec<&'a str>,
+        body: Vec<Self>,
+    },
     Break,
 }
 
@@ -114,6 +119,7 @@ pub struct Call<'a> {
 
 #[derive(Clone, Debug)]
 pub struct Function<'a> {
+    pub name: &'a str,
     pub body: FunctionKind<'a>,
     pub params: Vec<&'a str>,
 }
@@ -224,12 +230,20 @@ impl<'a> Expr<'a> {
             kind: ExprKind::Call(Call { callee, arguments }),
         }
     }
+
+    pub const fn function(name: &'a str, body: Box<Self>, line: usize) -> Self {
+        Expr { 
+            line: line,
+            kind: ExprKind::Assignment(Assignment { name, expr:  })
+
+    }
 }
 
 impl Display for Value<'_> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Self::String(..) => write!(f, "\"{}\"", self.cast_to_string()),
+            Self::Function(Function { name, .. }) => write!(f, "<fn {name}>"),
             _ => write!(f, "{}", self.cast_to_string()),
         }
     }
