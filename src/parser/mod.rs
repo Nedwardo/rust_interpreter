@@ -83,6 +83,7 @@ impl<'a> Parser<'a> {
     }
 
     fn consume_name(&mut self) -> Result<&'a str, ParserError> {
+        trace!("Consume name");
         let token = self.consume_if(&[TT::IDENTIFIER])?;
         let Some(TV::Identifier(name)) = token.token_value else {
             return Err(ParserError::unexpected_token(
@@ -94,11 +95,11 @@ impl<'a> Parser<'a> {
     }
 
     fn parse(&mut self) -> Result<Vec<Statement<'a>>, Vec<ParserError>> {
-        let mut statments = Vec::new();
+        let mut statements = Vec::new();
         let mut errors = Vec::new();
         while self.tokens.peek().is_some() {
-            match self.statment() {
-                Ok(statment) => statments.push(statment),
+            match self.statement() {
+                Ok(statement) => statements.push(statement),
                 Err(e) => errors.extend(e),
             }
         }
@@ -106,10 +107,10 @@ impl<'a> Parser<'a> {
         if !errors.is_empty() {
             return Err(errors);
         }
-        Ok(statments)
+        Ok(statements)
     }
 
-    fn statment(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
+    fn statement(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
         match self.tokens.peek() {
             None => Err(vec![ParserError::UnexpectedEOF]),
             Some(token) if token.kind == TT::LEFT_BRACE => {
@@ -117,27 +118,29 @@ impl<'a> Parser<'a> {
                 self.block()
             }
             Some(token) if token.kind == TT::FUN => {
-                self.tokens.next();
-                self.function()
+                let line =
+                    self.tokens.next().expect("Unwrapping a peeked value").line;
+                self.function(line)
             }
             _ => self.keyword(),
         }
     }
 
     fn block(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
+        trace!("Block");
         let mut members = Vec::new();
         let mut errors = Vec::new();
         while let Some(next_token) = self.tokens.peek()
             && next_token.kind != TT::RIGHT_BRACE
         {
-            let statment = if next_token.kind == TT::LEFT_BRACE {
+            let statement = if next_token.kind == TT::LEFT_BRACE {
                 self.block()
                     .wrap_err_with(|| "Failed generating block".to_owned())
             } else {
                 self.keyword()
                     .wrap_err_with(|| "Failed generating line".to_owned())
             };
-            match statment {
+            match statement {
                 Ok(s) => members.push(s),
                 Err(e) => {
                     self.synchronise();
@@ -159,11 +162,12 @@ impl<'a> Parser<'a> {
         &mut self,
         line: usize,
     ) -> Result<Statement<'a>, Vec<ParserError>> {
-        let name = self.consume_name();
+        trace!("Function");
+        let name = self.consume_name()?;
         self.consume_if(&[TT::LEFT_PAREN])?;
 
-        let params = vec![];
-        while let param = self.consume_name()? {
+        let mut params = vec![];
+        while let Ok(param) = self.consume_name() {
             params.push(param);
             if params.len() >= 255 {
                 return Err(vec![ParserError::TooManyArguments { line }]);
@@ -175,35 +179,48 @@ impl<'a> Parser<'a> {
 
         self.consume_if(&[TT::RIGHT_PAREN])?;
         self.consume_if(&[TT::LEFT_BRACE])?;
-        let body = self.block();
+        let body = Box::new(self.block()?);
 
-        return Token::function(name, params, body, line);
+        Ok(Statement::Declaration {
+            name,
+            expression: Some(Expr::function(name, params, body, line)),
+        })
     }
 
     fn keyword(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
+        trace!("Keyword");
         let next_token =
             self.tokens.peek().ok_or(ParserError::UnexpectedEOF)?;
 
-        let statment = match next_token.kind {
+        let statement = match next_token.kind {
             TT::VAR => {
                 self.tokens.next();
-                self.declaration()?
+                let declaration = self.declaration()?;
+                if self.tokens.peek().is_some() {
+                    self.consume_if(&[TT::SEMICOLON])?;
+                }
+                declaration
             }
             TT::PRINT => {
+                trace!("Print");
                 self.tokens.next();
-                self.expression(0).map(Statement::Print)?
+                let statement = self.expression(0).map(Statement::Print)?;
+                if self.tokens.peek().is_some() {
+                    self.consume_if(&[TT::SEMICOLON])?;
+                }
+                statement
             }
             TT::IF => {
                 self.tokens.next();
-                self.if_statment()?
+                self.if_statement()?
             }
             TT::WHILE => {
                 self.tokens.next();
-                self.while_statment()?
+                self.while_statement()?
             }
             TT::FOR => {
                 self.tokens.next();
-                self.for_statment()?
+                self.for_statement()?
             }
             TT::BREAK => {
                 if self.loop_depth != 0 {
@@ -212,17 +229,23 @@ impl<'a> Parser<'a> {
                         &[],
                     )]);
                 }
+                if self.tokens.peek().is_some() {
+                    self.consume_if(&[TT::SEMICOLON])?;
+                }
                 Statement::Break
+            }
+            TT::RETURN => {
+                let line =
+                    self.tokens.next().expect("Unwrapping a peeked value").line;
+                self.return_statement(line)?
             }
             _ => self.expression(0).map(Statement::Expression)?,
         };
-        if self.tokens.peek().is_some() {
-            self.consume_if(&[TT::SEMICOLON])?;
-        }
-        Ok(statment)
+        Ok(statement)
     }
 
     fn declaration(&mut self) -> Result<Statement<'a>, ParserError> {
+        trace!("Declaration");
         let name = self.consume_name()?;
         let expression =
             if self.tokens.peek().is_some_and(|t| t.kind == TT::EQUAL) {
@@ -234,14 +257,15 @@ impl<'a> Parser<'a> {
         Ok(Statement::Declaration { name, expression })
     }
 
-    fn if_statment(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
-        self.consume_if(&[TT::LEFT_BRACE])?;
+    fn if_statement(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
+        trace!("If");
+        self.consume_if(&[TT::LEFT_PAREN])?;
         let condition = self.expression(0)?;
-        self.consume_if(&[TT::RIGHT_BRACE])?;
+        self.consume_if(&[TT::RIGHT_PAREN])?;
 
-        let true_branch = Box::new(self.statment()?);
+        let true_branch = Box::new(self.statement()?);
         let false_branch = match self.consume_if(&[TT::ELSE]) {
-            Ok(_) => Some(Box::new(self.statment()?)),
+            Ok(_) => Some(Box::new(self.statement()?)),
             Err(_) => None,
         };
 
@@ -252,19 +276,19 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn while_statment(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
+    fn while_statement(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
         self.consume_if(&[TT::LEFT_PAREN])?;
         let condition = self.expression(0)?;
         self.consume_if(&[TT::RIGHT_PAREN])?;
 
         self.loop_depth += 1;
-        let body = Box::new(self.statment()?);
+        let body = Box::new(self.statement()?);
         self.loop_depth -= 1;
 
         Ok(Statement::While { condition, body })
     }
 
-    fn for_statment(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
+    fn for_statement(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
         trace!("For");
         self.consume_if(&[TT::LEFT_PAREN])?;
 
@@ -281,6 +305,7 @@ impl<'a> Parser<'a> {
             _ => Some(self.expression(0).map(Statement::Expression)?),
         };
         self.consume_if(&[TT::SEMICOLON])?;
+        trace!("For condition");
 
         next_token = self.tokens.peek().ok_or(ParserError::UnexpectedEOF)?;
         let condition = match next_token.kind {
@@ -288,6 +313,7 @@ impl<'a> Parser<'a> {
             _ => Some(self.expression(0)?),
         };
         self.consume_if(&[TT::SEMICOLON])?;
+        trace!("For increment");
 
         next_token = self.tokens.peek().ok_or(ParserError::UnexpectedEOF)?;
         let increment = match next_token.kind {
@@ -295,8 +321,9 @@ impl<'a> Parser<'a> {
             _ => Some(self.expression(0)?),
         };
         self.consume_if(&[TT::RIGHT_PAREN])?;
+        trace!("For body");
 
-        let body = Box::new(self.statment()?);
+        let body = Box::new(self.statement()?);
 
         Ok(Statement::r#for(
             initialiser,
@@ -307,10 +334,32 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    fn return_statement(
+        &mut self,
+        line: usize,
+    ) -> Result<Statement<'a>, ParserError> {
+        let return_expr = if matches!(
+            self.tokens.peek().ok_or(ParserError::UnexpectedEOF)?.kind,
+            TT::SEMICOLON
+        ) {
+            None
+        } else {
+            Some(self.expression(0)?)
+        };
+
+        self.consume_if(&[TT::SEMICOLON])?;
+
+        Ok(Statement::Return {
+            line,
+            value: return_expr,
+        })
+    }
+
     fn expression(
         &mut self,
         current_precedence: usize,
     ) -> Result<Expr<'a>, ParserError> {
+        trace!("Expression");
         let lhs = self.build_logical(current_precedence)?;
 
         if let Some(infix) = self.tokens.peek()
@@ -398,6 +447,7 @@ impl<'a> Parser<'a> {
                     break;
                 }
             }
+            return Ok(expr);
         }
 
         if let Ok(unary_op) = UnaryOperator::try_from(token.kind) {
@@ -437,10 +487,11 @@ impl<'a> Parser<'a> {
         &mut self,
         callee: Expr<'a>,
     ) -> Result<Expr<'a>, ParserError> {
+        trace!("Call");
         let mut arguments = Vec::new();
 
         loop {
-            arguments.push(self.expression(0)?);
+            arguments.push(self.expression(5)?);
             if arguments.len() >= 255 {
                 return Err(ParserError::TooManyArguments {
                     line: arguments[arguments.len() - 1].line,
@@ -460,6 +511,7 @@ impl<'a> Parser<'a> {
     }
 
     fn synchronise(&mut self) {
+        trace!("Synchronising");
         while let Some(token) = self.tokens.next() {
             if token.kind == TT::SEMICOLON {
                 break;

@@ -17,11 +17,11 @@ pub fn define_globals(scope: &mut Environment<'_>) {
 }
 
 #[allow(clippy::cast_precision_loss, clippy::unnecessary_wraps)]
-fn clock(_: Vec<Value<'_>>) -> Option<Value<'_>> {
+fn clock(_: Vec<Value<'_>>) -> Value<'_> {
     let unix_time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("Time should go forwards");
     let milliseconds = (unix_time.as_secs() * 1000) as f64
         + f64::from(unix_time.subsec_millis()) / 1_000_000.0;
-    Some(Value::Number(milliseconds))
+    Value::Number(milliseconds)
 }

@@ -1,7 +1,10 @@
 use crate::evaluator::globals::define_globals;
 use crate::expressions::Value;
+use core::fmt;
 use std::collections::HashMap;
+use std::fmt::{Display, Formatter};
 
+#[derive(Debug)]
 pub struct Environment<'a> {
     scopes: Vec<HashMap<&'a str, Option<Value<'a>>>>,
 }

@@ -21,10 +21,9 @@ pub enum Statement<'a> {
         condition: Expr<'a>,
         body: Box<Self>,
     },
-    Function {
-        name: &'a str,
-        params: Vec<&'a str>,
-        body: Vec<Self>,
+    Return {
+        line: usize,
+        value: Option<Expr<'a>>,
     },
     Break,
 }
@@ -127,7 +126,7 @@ pub struct Function<'a> {
 #[derive(Clone, Debug)]
 pub enum FunctionKind<'a> {
     Lox(Box<Statement<'a>>),
-    Rust(fn(Vec<Value<'a>>) -> Option<Value<'a>>),
+    Rust(fn(Vec<Value<'a>>) -> Value<'a>),
 }
 
 operator_subset!(UnaryOperator, {MINUS, BANG});
@@ -231,11 +230,20 @@ impl<'a> Expr<'a> {
         }
     }
 
-    pub const fn function(name: &'a str, body: Box<Self>, line: usize) -> Self {
-        Expr { 
-            line: line,
-            kind: ExprKind::Assignment(Assignment { name, expr:  })
-
+    pub const fn function(
+        name: &'a str,
+        params: Vec<&'a str>,
+        body: Box<Statement<'a>>,
+        line: usize,
+    ) -> Self {
+        Expr::literal(
+            Value::Function(Function {
+                name,
+                body: FunctionKind::Lox(body),
+                params,
+            }),
+            line,
+        )
     }
 }
 

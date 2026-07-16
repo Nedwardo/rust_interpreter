@@ -1,4 +1,5 @@
 mod error_utils;
+use log::trace;
 mod evaluator;
 mod expressions;
 mod logger;
@@ -24,7 +25,7 @@ use std::path::Path;
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = args().collect();
 
-    logger_init(LevelFilter::Info)?;
+    logger_init(LevelFilter::Trace)?;
 
     match args.as_slice() {
         [_] => run_prompt(),
@@ -65,8 +66,9 @@ fn run_prompt() -> Result<(), Box<dyn Error>> {
 
 fn run(file: &str) -> Result<Option<impl Display + use<'_>>, Box<dyn Error>> {
     let tokens = scan(file).map_err(Box::new)?;
-    let statments = parse(tokens)
+    let statements = parse(tokens)
         .map_err(|err| Box::new(FlattenedError::flatten(err, file)))?;
-    Ok(evaluate(&statments)
+    trace!("{statements:#?}");
+    Ok(evaluate(&statements)
         .map_err(|err| Box::new(FlattenedError::flatten(err, file)))?)
 }

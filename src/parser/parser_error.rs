@@ -105,7 +105,12 @@ impl From<ParserError> for StageError {
             } => Self {
                 line: Some(line),
                 message: format!(
-                    "Unexpected Token: Expected one of: {expected_token_types:?}, found {token_type}",
+                    "Unexpected Token: Expected one of: {}, found {token_type}",
+                    expected_token_types
+                        .iter()
+                        .map(|c| format!("'{c}'"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ),
                 error_location: Some(source),
                 stage: "parsing",

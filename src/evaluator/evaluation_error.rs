@@ -1,5 +1,5 @@
 use crate::error_utils::StageError;
-
+use crate::expressions::Value;
 use crate::expressions::{BinaryOperator, UnaryOperator};
 
 #[derive(Debug, Clone)]
@@ -31,6 +31,10 @@ pub enum EvaluationError<'a> {
         line: usize,
         expected_arguments: usize,
         recieved_arguments_count: usize,
+    },
+    Return {
+        line: usize,
+        value: Value<'a>,
     },
     Break,
 }
@@ -85,14 +89,21 @@ impl<'a> From<EvaluationError<'a>> for StageError {
             },
             EvaluationError::GroupErrors(errors) => Self {
                 line: None,
-                message: "Error while parsing group".to_owned(),
+                message: "Error while evaluation group".to_owned(),
                 error_location: None,
-                stage: "parsing",
+                stage: "evaluation",
                 children: errors.into_iter().map(Into::into).collect(),
             },
             EvaluationError::Break => unreachable!(
                 "Parser should prevent break from being returned as an error"
             ),
+            EvaluationError::Return { line, value: _ } => Self {
+                line: Some(line),
+                message: "Return used outside of function".to_owned(),
+                error_location: Some("return".to_owned()),
+                stage: "evaluation",
+                children: Vec::new(),
+            },
             EvaluationError::NonFunctionCalled { line } => Self {
                 line: Some(line),
                 message: "Can only call functions and classes".to_owned(),

@@ -62,7 +62,7 @@ impl Display for TokenValue<'_> {
             Self::False => write!(f, "false"),
             Self::True => write!(f, "true"),
             Self::Nil => write!(f, "nil"),
-            Self::Identifier(name) => write!(f, "Var: {name}"),
+            Self::Identifier(name) => write!(f, "{name}"),
             Self::Comment(comment) => write!(f, "// {comment}"),
         }
     }
