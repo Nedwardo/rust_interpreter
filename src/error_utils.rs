@@ -52,13 +52,16 @@ impl StageError {
     }
 }
 
-pub struct FlattenedError {
+pub struct HydratedStageError {
     error_message: String,
 }
 
 #[allow(unused, reason = "string write! cannot fail")]
-impl FlattenedError {
-    pub fn flatten(errors: Vec<impl Into<StageError>>, source: &str) -> Self {
+impl HydratedStageError {
+    pub fn hydrate_errors(
+        errors: Vec<impl Into<StageError>>,
+        source: &str,
+    ) -> Self {
         let mut error_message = String::new();
 
         for err in errors {
@@ -73,21 +76,27 @@ impl FlattenedError {
 
         Self { error_message }
     }
+
+    pub fn hydrate_error(error: &StageError, source: &str) -> Self {
+        Self {
+            error_message: error.generate_error_message(source),
+        }
+    }
 }
 
-impl Display for FlattenedError {
+impl Display for HydratedStageError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         Display::fmt(&self.error_message, f)
     }
 }
 
-impl Debug for FlattenedError {
+impl Debug for HydratedStageError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         Display::fmt(&self.error_message, f)
     }
 }
 
-impl Error for FlattenedError {}
+impl Error for HydratedStageError {}
 
 pub fn highlight_line_selection(
     line_number: usize,

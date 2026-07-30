@@ -14,8 +14,7 @@ pub struct Token<'a> {
 pub enum TokenValue<'a> {
     String(&'a str),
     Number(f64),
-    False,
-    True,
+    Bool(bool),
     Nil,
     Identifier(&'a str),
     Comment(&'a str),
@@ -46,8 +45,8 @@ impl<'a> Token<'a> {
 impl TokenValue<'static> {
     pub const fn from_keyword(token_type: TT) -> Option<Self> {
         match token_type {
-            TT::FALSE => Some(Self::False),
-            TT::TRUE => Some(Self::True),
+            TT::FALSE => Some(Self::Bool(false)),
+            TT::TRUE => Some(Self::Bool(true)),
             TT::NIL => Some(Self::Nil),
             _ => None,
         }
@@ -59,8 +58,7 @@ impl Display for TokenValue<'_> {
         match *self {
             Self::String(value) => write!(f, r#""{value}""#),
             Self::Number(value) => write!(f, "{value}"),
-            Self::False => write!(f, "false"),
-            Self::True => write!(f, "true"),
+            Self::Bool(value) => write!(f, "{value}"),
             Self::Nil => write!(f, "nil"),
             Self::Identifier(name) => write!(f, "{name}"),
             Self::Comment(comment) => write!(f, "// {comment}"),

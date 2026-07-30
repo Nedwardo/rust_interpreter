@@ -1,4 +1,4 @@
-use core::fmt::{Debug, Display, Formatter, Result};
+use core::fmt::{Debug, Display, Formatter};
 
 #[allow(
     non_camel_case_types,
@@ -59,6 +59,8 @@ pub enum TokenType {
     COMMENT,
 }
 
+operator_subset!(ValueTokenTypes, {STRING, NUMBER, TRUE, FALSE, NIL, IDENTIFIER, COMMENT});
+
 #[allow(clippy::enum_glob_use, reason = "Too many enum groups")]
 use super::token_type::TokenType::*;
 impl TokenType {
@@ -87,7 +89,7 @@ impl TokenType {
 }
 
 impl Display for TokenType {
-    fn fmt(&self, f: &mut Formatter) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         let output = match *self {
             LEFT_PAREN => "(",
             RIGHT_PAREN => ")",
@@ -140,9 +142,15 @@ impl Display for TokenType {
 }
 
 impl Debug for TokenType {
-    fn fmt(&self, f: &mut Formatter) -> Result {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         Display::fmt(self, f)
     }
+}
+
+pub trait OperatorSubset<P: 'static>:
+    TryFrom<P> + PartialEq + Eq + Copy + Clone
+{
+    const VARIANTS: &'static [P];
 }
 
 macro_rules! operator_subset {
@@ -151,19 +159,23 @@ macro_rules! operator_subset {
         #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
         pub enum $name { $($variant),* }
 
-        impl TryFrom<TokenType> for $name {
+        impl OperatorSubset<crate::token_type::TokenType> for $name {
+            const VARIANTS: &'static [crate::token_type::TokenType] = &[$(crate::token_type::TokenType::$variant),*];
+        }
+
+        impl std::convert::TryFrom<crate::token_type::TokenType> for $name {
             type Error = ();
-            fn try_from(tt: TokenType) -> Result<Self, ()> {
+            fn try_from(tt: crate::token_type::TokenType) -> std::result::Result<Self, ()> {
                 match tt {
-                    $(TokenType::$variant => Ok(Self::$variant),)*
+                    $(crate::token_type::TokenType::$variant => Ok(Self::$variant),)*
                     _ => Err(()),
                 }
             }
         }
 
-        impl Display for $name {
-            fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-                match self { $(Self::$variant => TokenType::$variant.fmt(f)),* }
+         impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                match self { $(Self::$variant => std::fmt::Display::fmt(&crate::token_type::TokenType::$variant, f)),* }
             }
         }
     };

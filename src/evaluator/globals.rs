@@ -1,3 +1,6 @@
+use crate::evaluator::environment::Scope;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
@@ -8,11 +11,14 @@ use crate::{
 pub fn define_globals(scope: &mut Environment<'_>) {
     scope.add_global(
         "clock",
-        Value::Function(Function {
-            body: FunctionKind::Rust(clock),
-            params: vec![],
-            name: "clock",
-        }),
+        Value::Function {
+            declaration: Function {
+                body: FunctionKind::Rust(clock),
+                params: vec![],
+                name: "clock",
+            },
+            closure: Scope::new(RefCell::new(HashMap::new())),
+        },
     );
 }
 

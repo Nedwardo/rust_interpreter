@@ -1,13 +1,12 @@
 mod scanner_error;
-use crate::error_utils::FlattenedError;
 use crate::token::Token;
 use crate::token::TokenValue as TV;
 use crate::token_type::TokenType;
 use crate::token_type::TokenType as TT;
 use core::str::Chars;
-use scanner_error::ScannerError;
+use scanner_error::ScannerError as Error;
 
-pub fn scan(source: &'_ str) -> Result<Vec<Token<'_>>, FlattenedError> {
+pub fn scan(source: &'_ str) -> Result<Vec<Token<'_>>, Vec<Error<'_>>> {
     Scanner::new(source).scan_tokens()
 }
 
@@ -33,7 +32,7 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn scan_tokens(&mut self) -> Result<Vec<Token<'a>>, FlattenedError> {
+    fn scan_tokens(&mut self) -> Result<Vec<Token<'a>>, Vec<Error<'a>>> {
         let mut tokens = Vec::new();
         let mut errors = Vec::new();
         while let Some(character) = self.iter.first() {
@@ -48,14 +47,14 @@ impl<'a> Scanner<'a> {
         if errors.is_empty() {
             Ok(tokens)
         } else {
-            Err(FlattenedError::flatten(errors, self.iter.source))
+            Err(errors)
         }
     }
 
     fn scan_token(
         &mut self,
         character: char,
-    ) -> Result<Option<Token<'a>>, ScannerError<'a>> {
+    ) -> Result<Option<Token<'a>>, Error<'a>> {
         let token = match character {
             '(' => self.build_single_char_token(TT::LEFT_PAREN),
             ')' => self.build_single_char_token(TT::RIGHT_PAREN),
@@ -115,11 +114,11 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn build_string(&mut self) -> Result<Token<'a>, ScannerError<'a>> {
+    fn build_string(&mut self) -> Result<Token<'a>, Error<'a>> {
         let line = self.iter.line();
         let (lexeme, success) = self.iter.consume_string();
         if !success {
-            return Err(ScannerError {
+            return Err(Error {
                 line,
                 message: "Unterminated string",
                 error_location: Some(lexeme),
@@ -161,9 +160,9 @@ impl<'a> Scanner<'a> {
         )
     }
 
-    fn scan_unexpected(&mut self) -> ScannerError<'a> {
+    fn scan_unexpected(&mut self) -> Error<'a> {
         let character = self.iter.consume_chars(1);
-        ScannerError {
+        Error {
             line: self.iter.line(),
             message: "Unexpected character",
             error_location: Some(character),

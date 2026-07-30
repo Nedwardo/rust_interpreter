@@ -1,12 +1,14 @@
-mod environment;
+pub mod environment;
 use log::trace;
 pub mod evaluation_error;
 mod globals;
+use std::convert::Into;
+use std::rc::Rc;
 
-use crate::evaluator::environment::Environment;
+use crate::evaluator::environment::{Environment, GetError};
 use crate::evaluator::evaluation_error::EvaluationError;
 use crate::evaluator::evaluation_error::EvaluationError::{
-    Break, GroupErrors, Return, UndefinedVariable, UnitialisedVariable,
+    Break, Return, UndefinedVariable, UnitialisedVariable,
     UnsupportedBinaryOperand, UnsupportedUnaryOperand,
 };
 
@@ -20,6 +22,7 @@ use crate::expressions::{Function, FunctionKind, Statement};
 pub fn evaluate<'a>(
     statements: &Vec<Statement<'a>>,
 ) -> Result<Option<Value<'a>>, Vec<impl Into<StageError> + use<'a>>> {
+    trace!("Begining eval");
     evaluate_statements(statements, &mut Environment::new())
 }
 
@@ -32,6 +35,11 @@ fn evaluate_statements<'a>(
     for statement in statements {
         match eval(statement, env) {
             Ok(value) => result = value,
+            Err(e)
+                if errors.is_empty() && matches!(e, Break | Return { .. }) =>
+            {
+                return Err(vec![e]);
+            }
             Err(e) => errors.push(e),
         }
     }
@@ -45,10 +53,18 @@ fn eval<'a>(
     statement: &Statement<'a>,
     env: &mut Environment<'a>,
 ) -> Result<Option<Value<'a>>, EvaluationError<'a>> {
+    trace!("Eval");
     match statement {
-        Statement::Expression(expr) => return visit(expr, env).map(Some),
-        Statement::Print(expr) => println!("{}", visit(expr, env)?),
+        Statement::Expression(expr) => {
+            trace!("Expression");
+            return visit(expr, env).map(Some);
+        }
+        Statement::Print(expr) => {
+            trace!("Print");
+            println!("{}", visit(expr, env)?);
+        }
         Statement::Declaration { name, expression } => {
+            trace!("Declaration");
             if let Some(expr) = expression {
                 let value = Some(visit(expr, env)?);
                 env.define(name, value);
@@ -56,10 +72,18 @@ fn eval<'a>(
                 env.define(name, None);
             }
         }
+        Statement::FunctionDeclaration(declaration) => {
+            env.define(
+                declaration.name,
+                Some(define_function(declaration, env)),
+            );
+        }
         Statement::Group(s) => {
+            trace!("Group");
             env.narrow();
-            evaluate_statements(s, env).map_err(GroupErrors)?;
-            env.pop_scope();
+            let result = evaluate_statements(s, env);
+            env.pop();
+            result?;
         }
         Statement::If {
             condition,
@@ -68,12 +92,11 @@ fn eval<'a>(
         } => {
             trace!("If");
             if as_bool(&visit(condition, env)?) {
-                trace!("If Success");
+                trace!("If success");
                 eval(true_branch, env)?;
             } else if let Some(branch) = false_branch {
                 eval(branch, env)?;
             }
-            trace!("Exiting if");
         }
         Statement::While { condition, body } => {
             while as_bool(&visit(condition, env)?) {
@@ -95,7 +118,6 @@ fn eval<'a>(
                 Some(expr) => visit(expr, env)?,
                 None => Value::Nil,
             };
-            trace!("Returning: {return_value}");
 
             return Err(Return {
                 line: *line,
@@ -104,6 +126,16 @@ fn eval<'a>(
         }
     }
     Ok(None)
+}
+
+fn define_function<'a>(
+    declaration: &Function<'a>,
+    env: &Environment<'a>,
+) -> Value<'a> {
+    Value::Function {
+        declaration: declaration.clone(),
+        closure: Rc::clone(env.top()),
+    }
 }
 
 fn visit<'a>(
@@ -115,17 +147,16 @@ fn visit<'a>(
         ExprKind::Unary(unary) => visit_unary(unary, expr.line, env),
         ExprKind::Binary(binary) => visit_binary(binary, expr.line, env),
         ExprKind::Grouping(expr) => visit(expr, env),
-        ExprKind::Identifier(name) => env
-            .get(name)
-            .cloned()
-            .ok_or(UndefinedVariable {
+        ExprKind::Identifier(name) => env.get(name).map_err(|err| match err {
+            GetError::Undefined => UndefinedVariable {
                 name,
                 line: expr.line,
-            })?
-            .ok_or(UnitialisedVariable {
+            },
+            GetError::Uninitalised => UnitialisedVariable {
                 name,
                 line: expr.line,
-            }),
+            },
+        }),
         ExprKind::Assignment(assignment) => {
             let value = visit(&assignment.expr, env)?;
             env.update(assignment.name, value.clone()).map_err(|()| {
@@ -138,6 +169,7 @@ fn visit<'a>(
         }
         ExprKind::Logical(logical) => visit_logical(logical, env),
         ExprKind::Call(call) => visit_call(call, expr.line, env),
+        ExprKind::Lambda(function) => Ok(define_function(function, env)),
     }
 }
 
@@ -233,11 +265,15 @@ fn visit_call<'a>(
     trace!("Call");
     let function = visit(&call.callee, env)?;
 
-    let Value::Function(Function {
-        body,
-        params,
-        name: _,
-    }) = function
+    let Value::Function {
+        declaration:
+            Function {
+                body,
+                params,
+                name: _,
+            },
+        closure,
+    } = function
     else {
         return Err(EvaluationError::NonFunctionCalled { line });
     };
@@ -255,21 +291,26 @@ fn visit_call<'a>(
         .map(|arg| visit(arg, env))
         .collect::<Result<_, _>>()?;
 
-    trace!("Call params {arguments:?}");
-
     match body {
         FunctionKind::Rust(function) => Ok(function(arguments)),
         FunctionKind::Lox(statement) => {
+            env.push(closure);
             env.narrow();
+
             for index in 0..params.len() {
                 env.define(params[index], Some(arguments[index].clone()));
             }
+            trace!("Calling with {arguments:?}");
             let result = eval(&statement, env);
-            env.pop_scope();
-            trace!("Exiting call with {result:?}");
+            env.pop();
+            env.pop();
+
             match result {
                 Ok(_) => Ok(Value::Nil),
-                Err(Return { line: _, value }) => Ok(value),
+                Err(Return { line: _, value }) => {
+                    trace!("Returning value: {value}");
+                    Ok(value)
+                }
                 Err(e) => Err(e),
             }
         }
@@ -282,19 +323,18 @@ fn numeric_binary_operations<'a>(
     operator: BinaryOperator,
     rhs: f64,
 ) -> Option<Value<'a>> {
-    trace!("comp!, {lhs}, {operator}, {rhs}");
     let result = match operator {
         BinaryOperator::MINUS => Value::Number(lhs - rhs),
         BinaryOperator::SLASH => Value::Number(lhs / rhs),
         BinaryOperator::STAR => Value::Number(lhs * rhs),
-        BinaryOperator::PLUS => Value::Number(lhs + rhs),
+        BinaryOperator::PLUS => {
+            trace!("Summation of {lhs} and {rhs}");
+            Value::Number(lhs + rhs)
+        }
         BinaryOperator::GREATER => Value::Boolean(lhs > rhs),
         BinaryOperator::GREATER_EQUAL => Value::Boolean(lhs >= rhs),
         BinaryOperator::LESS => Value::Boolean(lhs < rhs),
-        BinaryOperator::LESS_EQUAL => {
-            trace!("Result = {} = {}", lhs <= rhs, Value::Boolean(lhs <= rhs));
-            Value::Boolean(lhs <= rhs)
-        }
+        BinaryOperator::LESS_EQUAL => Value::Boolean(lhs <= rhs),
         _ => {
             return None;
         }
@@ -331,7 +371,7 @@ fn is_equal(left_value: &Value, right_value: &Value) -> bool {
         Value::Nil => {
             return matches!(*right_value, Value::Nil);
         }
-        Value::Function(..) => return false,
+        Value::Function { .. } => return false,
     }
     false
 }

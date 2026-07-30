@@ -7,7 +7,7 @@ mod parser;
 mod read_file_error;
 mod scanner;
 mod token;
-use crate::error_utils::FlattenedError;
+use crate::error_utils::HydratedStageError;
 use crate::parser::parse;
 use std::fmt::Display;
 mod token_type;
@@ -65,10 +65,12 @@ fn run_prompt() -> Result<(), Box<dyn Error>> {
 }
 
 fn run(file: &str) -> Result<Option<impl Display + use<'_>>, Box<dyn Error>> {
-    let tokens = scan(file).map_err(Box::new)?;
+    let tokens = scan(file)
+        .map_err(|err| HydratedStageError::hydrate_errors(err, file))?;
     let statements = parse(tokens)
-        .map_err(|err| Box::new(FlattenedError::flatten(err, file)))?;
-    trace!("{statements:#?}");
-    Ok(evaluate(&statements)
-        .map_err(|err| Box::new(FlattenedError::flatten(err, file)))?)
+        .map_err(|err| HydratedStageError::hydrate_error(&err, file))?;
+    trace!("Statments: {statements:#?}");
+    Ok(evaluate(&statements).map_err(|err| {
+        Box::new(HydratedStageError::hydrate_errors(err, file))
+    })?)
 }

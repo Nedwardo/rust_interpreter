@@ -2,27 +2,25 @@ pub mod parser_error;
 use crate::error_utils::StageError;
 use crate::expressions::BinaryOperator as BinaryOp;
 use crate::expressions::ExprKind;
-use crate::expressions::LogicalOperator;
-use crate::expressions::{Expr, Statement, UnaryOperator, Value};
-use crate::parser::parser_error::{ParserError, WrapErr};
+use crate::expressions::FunctionKind;
+use crate::expressions::LogicalOperator as LogicalOp;
+use crate::expressions::{Expr, Function, Statement, Value};
+use crate::parser::parser_error::ParserError as Error;
 use crate::token::Token;
 use crate::token::TokenValue as TV;
+use crate::token_type::OperatorSubset;
 use crate::token_type::TokenType as TT;
-use log::trace;
+use crate::token_type::ValueTokenTypes;
+use crate::token_type::operator_subset;
+use log::debug;
 use std::iter::Peekable;
 use std::vec::IntoIter;
 use std::vec::Vec;
 
-pub const fn prefix_precedence(token_type: UnaryOperator) -> usize {
+pub const fn logical_precedence(token_type: LogicalOp) -> usize {
     match token_type {
-        UnaryOperator::BANG | UnaryOperator::MINUS => 14,
-    }
-}
-
-pub const fn logical_precedence(token_type: LogicalOperator) -> usize {
-    match token_type {
-        LogicalOperator::AND => 1,
-        LogicalOperator::OR => 2,
+        LogicalOp::AND => 1,
+        LogicalOp::OR => 2,
     }
 }
 
@@ -40,6 +38,8 @@ pub const fn infix_precedence(token_type: BinaryOp) -> (usize, usize) {
     }
 }
 
+operator_subset!(Keyword, {VAR, FUN, PRINT, IF, WHILE, FOR, BREAK, RETURN} );
+
 struct TokenIter<'a>(IntoIter<Token<'a>>);
 impl<'a> Iterator for TokenIter<'a> {
     type Item = Token<'a>;
@@ -48,223 +48,271 @@ impl<'a> Iterator for TokenIter<'a> {
     }
 }
 
-pub struct Parser<'a> {
+struct TokenCursor<'a> {
     tokens: Peekable<TokenIter<'a>>,
-    loop_depth: usize,
+    checked_tokens: Vec<TT>,
 }
-
-pub fn parse(
-    tokens: Vec<Token>,
-) -> Result<Vec<Statement>, Vec<impl Into<StageError> + use<>>> {
-    Parser::new(tokens).parse()
-}
-
-impl<'a> Parser<'a> {
-    pub fn new(tokens: Vec<Token<'a>>) -> Self {
-        Parser {
-            tokens: TokenIter(tokens.into_iter()).peekable(),
-            loop_depth: 0,
+impl<'a> TokenCursor<'a> {
+    fn new(tokens: TokenIter<'a>) -> Self {
+        Self {
+            tokens: tokens.peekable(),
+            checked_tokens: vec![],
         }
+    }
+
+    fn next(&mut self) -> Option<Token<'a>> {
+        self.checked_tokens.clear();
+        self.tokens.next()
+    }
+
+    fn peek(&mut self) -> Option<&Token<'a>> {
+        self.tokens.peek()
     }
 
     fn consume_if(
         &mut self,
         token_types: &'static [TT],
-    ) -> Result<Token<'a>, ParserError> {
-        if let Some(token) = self.tokens.peek() {
-            if token_types.contains(&token.kind) {
-                Ok(self.tokens.next().expect("Unwrapping peeked value"))
-            } else {
-                Err(ParserError::unexpected_token(token, token_types))
+    ) -> Result<Token<'a>, Error> {
+        self.checked_tokens.extend(token_types);
+        match self.tokens.peek() {
+            Some(t) if token_types.contains(&t.kind) => {
+                Ok(self.next().expect("Unwrapping peeked value"))
             }
-        } else {
-            Err(ParserError::expected_token(token_types))
+            Some(t) => Err(Error::unexpected_token(t, &self.checked_tokens)),
+            None => Err(Error::expected_token(&self.checked_tokens)),
         }
     }
 
-    fn consume_name(&mut self) -> Result<&'a str, ParserError> {
-        trace!("Consume name");
+    fn consume_name(&mut self) -> Result<&'a str, Error> {
+        debug!("Consume name");
         let token = self.consume_if(&[TT::IDENTIFIER])?;
         let Some(TV::Identifier(name)) = token.token_value else {
-            return Err(ParserError::unexpected_token(
-                &token,
-                &[TT::IDENTIFIER],
-            ));
+            unreachable!(
+                "TT::Identifier's should all contain TV::Identifier's"
+            );
         };
         Ok(name)
     }
 
-    fn parse(&mut self) -> Result<Vec<Statement<'a>>, Vec<ParserError>> {
+    #[allow(clippy::map_err_ignore, reason = "Error data is present in token")]
+    fn peek_token_subset<Op: OperatorSubset<TT>>(
+        &mut self,
+    ) -> Result<(Op, usize), Error> {
+        self.checked_tokens.extend(Op::VARIANTS);
+        let token = self
+            .tokens
+            .peek()
+            .ok_or_else(|| Error::expected_token(&self.checked_tokens))?;
+        Op::try_from(token.kind)
+            .map(|op| (op, token.line))
+            .map_err(|_| Error::unexpected_token(token, &self.checked_tokens))
+    }
+
+    fn consume_semicolon_or_eof(&mut self) -> Result<(), Error> {
+        if self.peek().is_some() {
+            self.consume_if(&[TT::SEMICOLON])?;
+        }
+        Ok(())
+    }
+
+    fn consume_token_value(&mut self) -> Result<(TV<'a>, usize), Error> {
+        let token = self.consume_if(ValueTokenTypes::VARIANTS)?;
+        let line = token.line;
+        let value = token
+            .token_value
+            .expect("All value token types to have an associated value");
+        Ok((value, line))
+    }
+
+    fn unexpected(&self, token: &Token<'a>) -> Error {
+        Error::unexpected_token(token, &self.checked_tokens)
+    }
+
+    fn failed_to_match(&mut self) -> Error {
+        match self.tokens.peek() {
+            Some(token) => Error::unexpected_token(token, &self.checked_tokens),
+            None => Error::expected_token(&self.checked_tokens),
+        }
+    }
+}
+
+pub struct Parser<'a> {
+    tokens: TokenCursor<'a>,
+    loop_depth: usize,
+}
+
+pub fn parse(tokens: Vec<Token>) -> Result<Vec<Statement>, StageError> {
+    Ok(Parser::new(tokens).parse()?)
+}
+
+impl<'a> Parser<'a> {
+    pub fn new(tokens: Vec<Token<'a>>) -> Self {
+        Parser {
+            tokens: TokenCursor::new(TokenIter(tokens.into_iter())),
+            loop_depth: 0,
+        }
+    }
+
+    fn parse(&mut self) -> Result<Vec<Statement<'a>>, Error> {
         let mut statements = Vec::new();
         let mut errors = Vec::new();
         while self.tokens.peek().is_some() {
             match self.statement() {
                 Ok(statement) => statements.push(statement),
-                Err(e) => errors.extend(e),
+                Err(e) => errors.push(e),
             }
         }
 
         if !errors.is_empty() {
-            return Err(errors);
+            return Err(Error::block_error(errors));
         }
         Ok(statements)
     }
 
-    fn statement(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
-        match self.tokens.peek() {
-            None => Err(vec![ParserError::UnexpectedEOF]),
-            Some(token) if token.kind == TT::LEFT_BRACE => {
-                self.tokens.next();
-                self.block()
-            }
-            Some(token) if token.kind == TT::FUN => {
-                let line =
-                    self.tokens.next().expect("Unwrapping a peeked value").line;
-                self.function(line)
-            }
-            _ => self.keyword(),
+    fn statement(&mut self) -> Result<Statement<'a>, Error> {
+        if self.tokens.peek().is_none() {
+            return Err(Error::unexpected_eof("Start of statement"));
+        }
+        if self.tokens.consume_if(&[TT::LEFT_BRACE]).is_ok() {
+            self.block()
+        } else {
+            self.keyword()
         }
     }
 
-    fn block(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
-        trace!("Block");
+    fn block(&mut self) -> Result<Statement<'a>, Error> {
+        debug!("Block");
         let mut members = Vec::new();
         let mut errors = Vec::new();
         while let Some(next_token) = self.tokens.peek()
             && next_token.kind != TT::RIGHT_BRACE
         {
-            let statement = if next_token.kind == TT::LEFT_BRACE {
-                self.block()
-                    .wrap_err_with(|| "Failed generating block".to_owned())
-            } else {
-                self.keyword()
-                    .wrap_err_with(|| "Failed generating line".to_owned())
-            };
+            let statement = self.statement();
             match statement {
                 Ok(s) => members.push(s),
-                Err(e) => {
-                    self.synchronise();
-                    errors.push(e);
+                Err(err) => {
+                    if err.synchronise {
+                        self.synchronise();
+                    }
+                    errors.push(err);
                 }
             }
         }
-        if let Err(e) = self.consume_if(&[TT::RIGHT_BRACE]) {
+
+        if let Err(e) = self.tokens.consume_if(&[TT::RIGHT_BRACE]) {
             errors.push(e);
         }
 
         if !errors.is_empty() {
-            return Err(errors);
+            return Err(Error::block_error(errors));
         }
         Ok(Statement::Group(members))
     }
 
-    fn function(
+    fn function_declaration(
         &mut self,
         line: usize,
-    ) -> Result<Statement<'a>, Vec<ParserError>> {
-        trace!("Function");
-        let name = self.consume_name()?;
-        self.consume_if(&[TT::LEFT_PAREN])?;
+    ) -> Result<Statement<'a>, Error> {
+        debug!("Function");
+        let is_named =
+            matches!(self.tokens.peek(), Some(t) if t.kind == TT::IDENTIFIER);
+        if is_named {
+            let name = self.tokens.consume_name()?;
+            Ok(Statement::FunctionDeclaration(self.function(name, line)?))
+        } else {
+            Ok(Statement::Expression(Expr::lambda(
+                self.function("lambda", line)?,
+                line,
+            )))
+        }
+    }
+
+    fn function(
+        &mut self,
+        name: &'a str,
+        line: usize,
+    ) -> Result<Function<'a>, Error> {
+        self.tokens.consume_if(&[TT::LEFT_PAREN])?;
 
         let mut params = vec![];
-        while let Ok(param) = self.consume_name() {
+        while let Ok(param) = self.tokens.consume_name() {
             params.push(param);
             if params.len() >= 255 {
-                return Err(vec![ParserError::TooManyArguments { line }]);
+                return Err(Error::too_many_arguments(line, true));
             }
-            if self.consume_if(&[TT::COMMA]).is_err() {
+            if self.tokens.consume_if(&[TT::COMMA]).is_err() {
                 break;
             }
         }
 
-        self.consume_if(&[TT::RIGHT_PAREN])?;
-        self.consume_if(&[TT::LEFT_BRACE])?;
+        self.tokens.consume_if(&[TT::RIGHT_PAREN])?;
+        self.tokens.consume_if(&[TT::LEFT_BRACE])?;
         let body = Box::new(self.block()?);
-
-        Ok(Statement::Declaration {
+        Ok(Function {
             name,
-            expression: Some(Expr::function(name, params, body, line)),
+            params,
+            body: FunctionKind::Lox(body),
         })
     }
 
-    fn keyword(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
-        trace!("Keyword");
-        let next_token =
-            self.tokens.peek().ok_or(ParserError::UnexpectedEOF)?;
+    fn keyword(&mut self) -> Result<Statement<'a>, Error> {
+        debug!("Keyword");
+        let Ok((keyword, line)) = self.tokens.peek_token_subset() else {
+            // no keyword token, treat as an expression statement
+            let statement = self.expression(0).map(Statement::Expression)?;
+            self.tokens.consume_semicolon_or_eof()?;
+            return Ok(statement);
+        };
+        let token = self.tokens.next().expect("Unwrapping a peeked value");
 
-        let statement = match next_token.kind {
-            TT::VAR => {
-                self.tokens.next();
+        let statement = match keyword {
+            Keyword::VAR => {
                 let declaration = self.declaration()?;
-                if self.tokens.peek().is_some() {
-                    self.consume_if(&[TT::SEMICOLON])?;
-                }
+                self.tokens.consume_semicolon_or_eof()?;
                 declaration
             }
-            TT::PRINT => {
-                trace!("Print");
-                self.tokens.next();
+            Keyword::FUN => self.function_declaration(line)?,
+            Keyword::PRINT => {
+                debug!("Print");
                 let statement = self.expression(0).map(Statement::Print)?;
-                if self.tokens.peek().is_some() {
-                    self.consume_if(&[TT::SEMICOLON])?;
-                }
+                self.tokens.consume_semicolon_or_eof()?;
                 statement
             }
-            TT::IF => {
-                self.tokens.next();
-                self.if_statement()?
-            }
-            TT::WHILE => {
-                self.tokens.next();
-                self.while_statement()?
-            }
-            TT::FOR => {
-                self.tokens.next();
-                self.for_statement()?
-            }
-            TT::BREAK => {
+            Keyword::IF => self.if_statement()?,
+            Keyword::WHILE => self.while_statement()?,
+            Keyword::FOR => self.for_statement()?,
+            Keyword::BREAK => {
                 if self.loop_depth != 0 {
-                    return Err(vec![ParserError::unexpected_token(
-                        &self.tokens.next().expect("Unwrapping a peeked value"),
-                        &[],
-                    )]);
+                    return Err(self.tokens.unexpected(&token));
                 }
-                if self.tokens.peek().is_some() {
-                    self.consume_if(&[TT::SEMICOLON])?;
-                }
+                self.tokens.consume_semicolon_or_eof()?;
                 Statement::Break
             }
-            TT::RETURN => {
-                let line =
-                    self.tokens.next().expect("Unwrapping a peeked value").line;
-                self.return_statement(line)?
-            }
-            _ => self.expression(0).map(Statement::Expression)?,
+            Keyword::RETURN => self.return_statement(line)?,
         };
+
         Ok(statement)
     }
 
-    fn declaration(&mut self) -> Result<Statement<'a>, ParserError> {
-        trace!("Declaration");
-        let name = self.consume_name()?;
-        let expression =
-            if self.tokens.peek().is_some_and(|t| t.kind == TT::EQUAL) {
-                self.tokens.next();
-                Some(self.expression(0)?)
-            } else {
-                None
-            };
+    fn declaration(&mut self) -> Result<Statement<'a>, Error> {
+        debug!("Declaration");
+        let name = self.tokens.consume_name()?;
+        let expression = if self.tokens.consume_if(&[TT::EQUAL]).is_ok() {
+            Some(self.expression(0)?)
+        } else {
+            None
+        };
         Ok(Statement::Declaration { name, expression })
     }
 
-    fn if_statement(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
-        trace!("If");
-        self.consume_if(&[TT::LEFT_PAREN])?;
+    fn if_statement(&mut self) -> Result<Statement<'a>, Error> {
+        debug!("If");
+        self.tokens.consume_if(&[TT::LEFT_PAREN])?;
         let condition = self.expression(0)?;
-        self.consume_if(&[TT::RIGHT_PAREN])?;
+        self.tokens.consume_if(&[TT::RIGHT_PAREN])?;
 
         let true_branch = Box::new(self.statement()?);
-        let false_branch = match self.consume_if(&[TT::ELSE]) {
+        let false_branch = match self.tokens.consume_if(&[TT::ELSE]) {
             Ok(_) => Some(Box::new(self.statement()?)),
             Err(_) => None,
         };
@@ -276,10 +324,10 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn while_statement(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
-        self.consume_if(&[TT::LEFT_PAREN])?;
+    fn while_statement(&mut self) -> Result<Statement<'a>, Error> {
+        self.tokens.consume_if(&[TT::LEFT_PAREN])?;
         let condition = self.expression(0)?;
-        self.consume_if(&[TT::RIGHT_PAREN])?;
+        self.tokens.consume_if(&[TT::RIGHT_PAREN])?;
 
         self.loop_depth += 1;
         let body = Box::new(self.statement()?);
@@ -288,40 +336,50 @@ impl<'a> Parser<'a> {
         Ok(Statement::While { condition, body })
     }
 
-    fn for_statement(&mut self) -> Result<Statement<'a>, Vec<ParserError>> {
-        trace!("For");
-        self.consume_if(&[TT::LEFT_PAREN])?;
+    fn for_statement(&mut self) -> Result<Statement<'a>, Error> {
+        debug!("For");
+        self.tokens.consume_if(&[TT::LEFT_PAREN])?;
 
-        let mut next_token =
-            self.tokens.peek().ok_or(ParserError::UnexpectedEOF)?;
+        let mut next_token = self
+            .tokens
+            .peek()
+            .ok_or(Error::unexpected_eof("For statement"))?;
         let line = next_token.line;
 
-        let initialiser = match next_token.kind {
-            TT::SEMICOLON => None,
-            TT::VAR => {
-                self.tokens.next();
-                Some(self.declaration()?)
-            }
-            _ => Some(self.expression(0).map(Statement::Expression)?),
+        let initialiser = if let Some(token) = self.tokens.peek()
+            && token.kind == TT::SEMICOLON
+        {
+            None
+        } else if self.tokens.consume_if(&[TT::VAR]).is_ok() {
+            Some(self.declaration()?)
+        } else {
+            Some(self.expression(0).map(Statement::Expression)?)
         };
-        self.consume_if(&[TT::SEMICOLON])?;
-        trace!("For condition");
 
-        next_token = self.tokens.peek().ok_or(ParserError::UnexpectedEOF)?;
+        self.tokens.consume_if(&[TT::SEMICOLON])?;
+        debug!("For condition");
+
+        next_token = self
+            .tokens
+            .peek()
+            .ok_or(Error::unexpected_eof("For statement"))?;
         let condition = match next_token.kind {
             TT::SEMICOLON => None,
             _ => Some(self.expression(0)?),
         };
-        self.consume_if(&[TT::SEMICOLON])?;
-        trace!("For increment");
+        self.tokens.consume_if(&[TT::SEMICOLON])?;
+        debug!("For increment");
 
-        next_token = self.tokens.peek().ok_or(ParserError::UnexpectedEOF)?;
+        next_token = self
+            .tokens
+            .peek()
+            .ok_or(Error::unexpected_eof("For statement"))?;
         let increment = match next_token.kind {
             TT::SEMICOLON => None,
             _ => Some(self.expression(0)?),
         };
-        self.consume_if(&[TT::RIGHT_PAREN])?;
-        trace!("For body");
+        self.tokens.consume_if(&[TT::RIGHT_PAREN])?;
+        debug!("For body");
 
         let body = Box::new(self.statement()?);
 
@@ -337,17 +395,18 @@ impl<'a> Parser<'a> {
     fn return_statement(
         &mut self,
         line: usize,
-    ) -> Result<Statement<'a>, ParserError> {
-        let return_expr = if matches!(
-            self.tokens.peek().ok_or(ParserError::UnexpectedEOF)?.kind,
-            TT::SEMICOLON
-        ) {
-            None
-        } else {
-            Some(self.expression(0)?)
+    ) -> Result<Statement<'a>, Error> {
+        let return_expr = match self
+            .tokens
+            .peek()
+            .ok_or(Error::unexpected_eof("Return statement"))?
+            .kind
+        {
+            TT::SEMICOLON => None,
+            _ => Some(self.expression(0)?),
         };
 
-        self.consume_if(&[TT::SEMICOLON])?;
+        self.tokens.consume_if(&[TT::SEMICOLON])?;
 
         Ok(Statement::Return {
             line,
@@ -358,22 +417,18 @@ impl<'a> Parser<'a> {
     fn expression(
         &mut self,
         current_precedence: usize,
-    ) -> Result<Expr<'a>, ParserError> {
-        trace!("Expression");
+    ) -> Result<Expr<'a>, Error> {
+        debug!("Expression - {current_precedence}");
         let lhs = self.build_logical(current_precedence)?;
 
-        if let Some(infix) = self.tokens.peek()
-            && infix.kind == TT::EQUAL
-        {
-            let token = self.tokens.next().expect("Retriving a peeked value");
+        if let Ok(token) = self.tokens.consume_if(&[TT::EQUAL]) {
+            debug!("Building an assignment from {token:?}");
             let rhs = self.expression(current_precedence)?;
 
             if let ExprKind::Identifier(name) = lhs.kind {
                 return Ok(Expr::assignment(name, Box::new(rhs), token.line));
             }
-            return Err(ParserError::InvalidAssignmentTarget {
-                line: token.line,
-            });
+            return Err(Error::invalid_assignment_target(token.line));
         }
 
         Ok(lhs)
@@ -382,25 +437,19 @@ impl<'a> Parser<'a> {
     pub fn build_logical(
         &mut self,
         current_precedence: usize,
-    ) -> Result<Expr<'a>, ParserError> {
-        trace!("Logical");
+    ) -> Result<Expr<'a>, Error> {
+        debug!("Logical");
         let mut lhs = self.build_binary(current_precedence)?;
 
-        while let Some(infix) = self
-            .tokens
-            .peek()
-            .and_then(|token| LogicalOperator::try_from(token.kind).ok())
-        {
+        while let Ok((infix, line)) = self.tokens.peek_token_subset() {
             let precedence = logical_precedence(infix);
             if precedence < current_precedence {
                 break;
             }
-            let token = self.tokens.next().expect("Retriving a peeked value");
-            let rhs = self.build_logical(precedence).wrap_err_with(|| {
-                format!("Failed reading rhs for {token:?}")
-            })?;
-            lhs =
-                Expr::logical(Box::new(lhs), infix, Box::new(rhs), token.line);
+            self.tokens.next();
+
+            let rhs = self.build_logical(precedence)?;
+            lhs = Expr::logical(Box::new(lhs), infix, Box::new(rhs), line);
         }
         Ok(lhs)
     }
@@ -408,110 +457,78 @@ impl<'a> Parser<'a> {
     pub fn build_binary(
         &mut self,
         current_precedence: usize,
-    ) -> Result<Expr<'a>, ParserError> {
-        trace!("Binary");
+    ) -> Result<Expr<'a>, Error> {
+        debug!("Binary");
         let mut lhs = self.parse_prefix()?;
 
-        while let Some(infix) = self
-            .tokens
-            .peek()
-            .and_then(|token| BinaryOp::try_from(token.kind).ok())
-        {
+        while let Ok((infix, line)) = self.tokens.peek_token_subset() {
             let (l_precedence, r_precedence) = infix_precedence(infix);
             if l_precedence < current_precedence {
                 break;
             }
-            let token = self.tokens.next().expect("Retriving a peeked value");
-            let rhs = self.build_binary(r_precedence).wrap_err_with(|| {
-                format!("Failed reading rhs for {token:?}")
-            })?;
-            lhs = Expr::binary(Box::new(lhs), infix, Box::new(rhs), token.line);
+            self.tokens.next();
+
+            let rhs = self.build_binary(r_precedence)?;
+            lhs = Expr::binary(Box::new(lhs), infix, Box::new(rhs), line);
         }
         Ok(lhs)
     }
 
-    pub fn parse_prefix(&mut self) -> Result<Expr<'a>, ParserError> {
-        trace!("Prefix");
-        let token = self.tokens.next().ok_or(ParserError::UnexpectedEOF)?;
+    pub fn parse_prefix(&mut self) -> Result<Expr<'a>, Error> {
+        debug!("Prefix");
 
-        if let Some(token_value) = token.token_value {
-            let mut expr = build_value(token_value, token.line);
-
-            loop {
-                if let Some(token) = self.tokens.peek()
-                    && matches!(token.kind, TT::LEFT_PAREN)
-                {
-                    self.tokens.next();
-                    expr = self.build_call(expr)?;
-                } else {
-                    break;
-                }
-            }
-            return Ok(expr);
+        if let Ok((unary_op, line)) = self.tokens.peek_token_subset() {
+            self.tokens.next();
+            let expr = Box::new(self.parse_prefix()?);
+            return Ok(Expr::unary(unary_op, expr, line));
         }
 
-        if let Ok(unary_op) = UnaryOperator::try_from(token.kind) {
-            return self.build_unary(unary_op, token.line);
+        let mut expr =
+            if let Ok((value, line)) = self.tokens.consume_token_value() {
+                build_value(value, line)
+            } else if self.tokens.consume_if(&[TT::LEFT_PAREN]).is_ok() {
+                let inner = self.expression(0)?;
+                let token = self.tokens.consume_if(&[TT::RIGHT_PAREN])?;
+                Expr::grouping(Box::new(inner), token.line)
+            } else if let Ok(token) = self.tokens.consume_if(&[TT::FUN]) {
+                Expr::lambda(self.function("lambda", token.line)?, token.line)
+            } else {
+                return Err(self.tokens.failed_to_match());
+            };
+
+        while self.tokens.consume_if(&[TT::LEFT_PAREN]).is_ok() {
+            expr = self.build_call(expr)?;
         }
-
-        if token.kind == TT::LEFT_PAREN {
-            return self.build_group();
-        }
-
-        // todo!(
-        //    "Error message dose not reflect that this accepts any valid value"
-        //);
-        Err(ParserError::unexpected_token(
-            &token,
-            &[TT::BANG, TT::MINUS, TT::LEFT_PAREN],
-        ))
+        Ok(expr)
     }
 
-    fn build_unary(
-        &mut self,
-        operator: UnaryOperator,
-        line: usize,
-    ) -> Result<Expr<'a>, ParserError> {
-        let precedence = prefix_precedence(operator);
-        let expr = Box::new(self.expression(precedence)?);
-        Ok(Expr::unary(operator, expr, line))
-    }
-
-    fn build_group(&mut self) -> Result<Expr<'a>, ParserError> {
-        let inner = self.expression(0)?;
-        let token = self.consume_if(&[TT::RIGHT_PAREN])?;
-        Ok(Expr::grouping(Box::new(inner), token.line))
-    }
-
-    fn build_call(
-        &mut self,
-        callee: Expr<'a>,
-    ) -> Result<Expr<'a>, ParserError> {
-        trace!("Call");
+    fn build_call(&mut self, callee: Expr<'a>) -> Result<Expr<'a>, Error> {
+        debug!("Call");
         let mut arguments = Vec::new();
 
-        loop {
+        while let Some(next) = self.tokens.peek()
+            && next.kind != TT::RIGHT_PAREN
+        {
+            debug!("First call arg = {next:?}");
             arguments.push(self.expression(5)?);
             if arguments.len() >= 255 {
-                return Err(ParserError::TooManyArguments {
-                    line: arguments[arguments.len() - 1].line,
-                });
-                todo!(
-                    "This needs to report the error, but not go into panic mode???"
-                );
+                return Err(Error::too_many_arguments(
+                    arguments[arguments.len() - 1].line,
+                    false,
+                ));
             }
-            if self.consume_if(&[TT::COMMA]).is_err() {
+            if self.tokens.consume_if(&[TT::COMMA]).is_err() {
                 break;
             }
         }
 
-        self.consume_if(&[TT::RIGHT_PAREN])?;
+        self.tokens.consume_if(&[TT::RIGHT_PAREN])?;
 
         Ok(Expr::call(Box::new(callee), arguments))
     }
 
     fn synchronise(&mut self) {
-        trace!("Synchronising");
+        debug!("Synchronising {:?}", self.tokens.peek());
         while let Some(token) = self.tokens.next() {
             if token.kind == TT::SEMICOLON {
                 break;
@@ -535,11 +552,11 @@ impl<'a> Parser<'a> {
 }
 
 fn build_value(value: TV, line: usize) -> Expr {
+    debug!("Building value from: {value:?}");
     match value {
         TV::String(text) => Expr::literal(Value::String(text.to_owned()), line),
         TV::Number(number) => Expr::literal(Value::Number(number), line),
-        TV::False => Expr::literal(Value::Boolean(false), line),
-        TV::True => Expr::literal(Value::Boolean(true), line),
+        TV::Bool(val) => Expr::literal(Value::Boolean(val), line),
         TV::Nil => Expr::literal(Value::Nil, line),
         TV::Identifier(name) => Expr::identifier(name, line),
         TV::Comment(..) => {

@@ -39,6 +39,21 @@ pub enum EvaluationError<'a> {
     Break,
 }
 
+impl From<Vec<Self>> for EvaluationError<'_> {
+    fn from(value: Vec<Self>) -> Self {
+        if value.len() == 1
+            && matches!(
+                value[0],
+                EvaluationError::Break | EvaluationError::Return { .. }
+            )
+        {
+            value[0].clone()
+        } else {
+            EvaluationError::GroupErrors(value)
+        }
+    }
+}
+
 impl<'a> From<EvaluationError<'a>> for StageError {
     fn from(val: EvaluationError<'a>) -> Self {
         match val {
@@ -89,7 +104,7 @@ impl<'a> From<EvaluationError<'a>> for StageError {
             },
             EvaluationError::GroupErrors(errors) => Self {
                 line: None,
-                message: "Error while evaluation group".to_owned(),
+                message: "Error while evaluating group".to_owned(),
                 error_location: None,
                 stage: "evaluation",
                 children: errors.into_iter().map(Into::into).collect(),

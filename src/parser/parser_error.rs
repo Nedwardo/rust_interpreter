@@ -1,103 +1,99 @@
 use crate::error_utils::StageError;
 use crate::token::Token;
 use crate::token_type::TokenType;
-use std::fmt::Display;
 
 #[derive(Debug, Clone)]
-pub enum ParserError {
+pub struct ParserError {
+    pub kind: ParserErrorKind,
+    pub synchronise: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum ParserErrorKind {
     UnexpectedToken {
         source: String,
         line: usize,
         token_type: TokenType,
-        expected_token_types: &'static [TokenType],
+        expected_token_types: Vec<TokenType>,
     },
     InvalidAssignmentTarget {
         line: usize,
     },
     EOFWhileExpecting {
-        expected_token_types: &'static [TokenType],
+        expected_token_types: Vec<TokenType>,
     },
-    UnexpectedEOF,
-    FailedToGenerateChildExpr {
-        error_message: String,
-        source: Vec<Self>,
+    UnexpectedEOF {
+        expected: &'static str,
     },
     TooManyArguments {
         line: usize,
+    },
+    BlockError {
+        errors: Vec<ParserError>,
     },
 }
 
 impl ParserError {
     pub fn unexpected_token(
         token: &Token<'_>,
-        expected_token_types: &'static [TokenType],
+        token_types: &[TokenType],
     ) -> Self {
-        Self::UnexpectedToken {
-            source: token.token_value.map_or_else(
-                || token.kind.to_string(),
-                |token| token.to_string(),
-            ),
-            line: token.line,
-            token_type: token.kind,
-            expected_token_types,
+        Self {
+            kind: ParserErrorKind::UnexpectedToken {
+                source: token.token_value.map_or_else(
+                    || token.kind.to_string(),
+                    |token| token.to_string(),
+                ),
+                line: token.line,
+                token_type: token.kind,
+                expected_token_types: token_types.to_owned(),
+            },
+            synchronise: true,
         }
     }
 
-    pub const fn expected_token(
-        expected_token_types: &'static [TokenType],
-    ) -> Self {
-        Self::EOFWhileExpecting {
-            expected_token_types,
+    pub const fn invalid_assignment_target(line: usize) -> Self {
+        Self {
+            kind: ParserErrorKind::InvalidAssignmentTarget { line },
+            synchronise: true,
         }
     }
 
-    pub fn wrap(self, error_message: String) -> Self {
-        Self::FailedToGenerateChildExpr {
-            error_message,
-            source: vec![self],
+    pub const fn unexpected_eof(expected: &'static str) -> Self {
+        Self {
+            kind: ParserErrorKind::UnexpectedEOF { expected },
+            synchronise: true,
         }
     }
-}
 
-pub trait WrapErr<T, E, D>
-where
-    D: Display + Send + Sync + 'static,
-{
-    fn wrap_err(self, expr: D) -> Result<T, E>;
-
-    fn wrap_err_with<F: FnOnce() -> D>(self, f: F) -> Result<T, E>
-    where
-        Self: Sized,
-    {
-        self.wrap_err(f())
+    pub const fn too_many_arguments(line: usize, synchronise: bool) -> Self {
+        Self {
+            kind: ParserErrorKind::TooManyArguments { line },
+            synchronise,
+        }
     }
-}
 
-impl<T> WrapErr<T, ParserError, String> for Result<T, ParserError> {
-    fn wrap_err(self, expr: String) -> Self {
-        self.map_err(|e| e.wrap(expr))
+    pub fn expected_token(expected_token_types: &[TokenType]) -> Self {
+        Self {
+            kind: ParserErrorKind::EOFWhileExpecting {
+                expected_token_types: expected_token_types.to_owned(),
+            },
+            synchronise: true,
+        }
     }
-}
-
-impl<T> WrapErr<T, ParserError, String> for Result<T, Vec<ParserError>> {
-    fn wrap_err(self, expr: String) -> Result<T, ParserError> {
-        self.map_err(|e| ParserError::FailedToGenerateChildExpr {
-            error_message: expr,
-            source: e,
-        })
-    }
-}
-
-impl From<ParserError> for Vec<ParserError> {
-    fn from(val: ParserError) -> Self {
-        vec![val]
+    pub fn block_error(errors: Vec<Self>) -> Self {
+        let synchronise = !errors.iter().all(|val| !val.synchronise);
+        Self {
+            kind: ParserErrorKind::BlockError { errors },
+            synchronise,
+        }
     }
 }
 
 impl From<ParserError> for StageError {
     fn from(val: ParserError) -> Self {
-        match val {
-            ParserError::UnexpectedToken {
+        match val.kind {
+            ParserErrorKind::UnexpectedToken {
                 source,
                 line,
                 token_type,
@@ -116,14 +112,14 @@ impl From<ParserError> for StageError {
                 stage: "parsing",
                 children: Vec::new(),
             },
-            ParserError::InvalidAssignmentTarget { line } => Self {
+            ParserErrorKind::InvalidAssignmentTarget { line } => Self {
                 line: Some(line),
                 message: "Invalid assignment target".to_owned(),
                 error_location: Some("=".to_owned()),
                 stage: "parsing",
                 children: Vec::new(),
             },
-            ParserError::EOFWhileExpecting {
+            ParserErrorKind::EOFWhileExpecting {
                 expected_token_types,
             } => Self {
                 line: None,
@@ -134,29 +130,29 @@ impl From<ParserError> for StageError {
                 stage: "parsing",
                 children: Vec::new(),
             },
-            ParserError::UnexpectedEOF => Self {
+            ParserErrorKind::UnexpectedEOF { expected } => Self {
                 line: None,
-                message: "Unexpected EOF".to_owned(),
+                message: format!("Unexpected EOF, while parsing {expected}"),
                 error_location: None,
                 stage: "parsing",
                 children: Vec::new(),
             },
-            ParserError::FailedToGenerateChildExpr {
-                error_message,
-                source,
-            } => Self {
-                line: None,
-                message: error_message,
-                error_location: None,
-                stage: "parsing",
-                children: source.iter().map(|e| e.clone().into()).collect(),
-            },
-            ParserError::TooManyArguments { line } => Self {
+            ParserErrorKind::TooManyArguments { line } => Self {
                 line: Some(line),
                 message: "Can't have more than 255 arguments.".to_owned(),
                 error_location: None,
                 stage: "Parsing",
                 children: Vec::new(),
+            },
+            ParserErrorKind::BlockError { errors } => Self {
+                line: None,
+                message: "Error while generating block".to_owned(),
+                error_location: None,
+                stage: "parsing",
+                children: errors
+                    .iter()
+                    .map(|e| Self::from(e.clone()))
+                    .collect(),
             },
         }
     }

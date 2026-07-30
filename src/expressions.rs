@@ -1,5 +1,5 @@
-use crate::token_type::TokenType;
-use crate::token_type::operator_subset;
+use crate::evaluator::environment::Scope;
+use crate::token_type::{OperatorSubset, operator_subset};
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
@@ -9,6 +9,7 @@ pub enum Statement<'a> {
         name: &'a str,
         expression: Option<Expr<'a>>,
     },
+    FunctionDeclaration(Function<'a>),
     Expression(Expr<'a>),
     Print(Expr<'a>),
     Group(Vec<Self>),
@@ -73,11 +74,15 @@ pub enum ExprKind<'a> {
     Assignment(Assignment<'a>),
     Logical(Logical<'a>),
     Call(Call<'a>),
+    Lambda(Function<'a>),
 }
 
 #[derive(Clone, Debug)]
 pub enum Value<'a> {
-    Function(Function<'a>),
+    Function {
+        declaration: Function<'a>,
+        closure: Scope<'a>,
+    },
     String(String),
     Number(f64),
     Boolean(bool),
@@ -230,20 +235,11 @@ impl<'a> Expr<'a> {
         }
     }
 
-    pub const fn function(
-        name: &'a str,
-        params: Vec<&'a str>,
-        body: Box<Statement<'a>>,
-        line: usize,
-    ) -> Self {
-        Expr::literal(
-            Value::Function(Function {
-                name,
-                body: FunctionKind::Lox(body),
-                params,
-            }),
+    pub const fn lambda(function: Function<'a>, line: usize) -> Self {
+        Expr {
             line,
-        )
+            kind: ExprKind::Lambda(function),
+        }
     }
 }
 
@@ -251,7 +247,10 @@ impl Display for Value<'_> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Self::String(..) => write!(f, "\"{}\"", self.cast_to_string()),
-            Self::Function(Function { name, .. }) => write!(f, "<fn {name}>"),
+            Self::Function {
+                declaration: Function { name, .. },
+                ..
+            } => write!(f, "<fn {name}>"),
             _ => write!(f, "{}", self.cast_to_string()),
         }
     }
@@ -264,7 +263,7 @@ impl Value<'_> {
             Self::Number(..) => "Number",
             Self::Boolean(..) => "Boolean",
             Self::Nil => "nil",
-            Self::Function(..) => "Function",
+            Self::Function { .. } => "Function",
         }
     }
 
@@ -274,7 +273,7 @@ impl Value<'_> {
             Self::Number(value) => format!("{value}"),
             Self::Boolean(value) => format!("{value}"),
             Self::Nil => "nil".to_owned(),
-            Self::Function(..) => "Function".to_owned(),
+            Self::Function { .. } => "Function".to_owned(),
         }
     }
 }
