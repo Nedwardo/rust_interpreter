@@ -2,7 +2,7 @@ pub mod environment;
 use log::trace;
 pub mod evaluation_error;
 mod globals;
-use std::convert::Into;
+use std::fmt::Write;
 use std::rc::Rc;
 
 use crate::evaluator::environment::{Environment, GetError};
@@ -12,28 +12,29 @@ use crate::evaluator::evaluation_error::EvaluationError::{
     UnsupportedBinaryOperand, UnsupportedUnaryOperand,
 };
 
-use crate::error_utils::StageError;
 use crate::expressions::{
     Binary, BinaryOperator, Call, Expr, ExprKind, Logical, LogicalOperator,
     Unary, UnaryOperator, Value,
 };
 use crate::expressions::{Function, FunctionKind, Statement};
 
-pub fn evaluate<'a>(
+pub fn evaluate<'a, W: Write>(
     statements: &Vec<Statement<'a>>,
-) -> Result<Option<Value<'a>>, Vec<impl Into<StageError> + use<'a>>> {
+    writer: &mut W,
+) -> Result<Option<Value<'a>>, Vec<EvaluationError<'a>>> {
     trace!("Begining eval");
-    evaluate_statements(statements, &mut Environment::new())
+    evaluate_statements(statements, &mut Environment::new(), writer)
 }
 
-fn evaluate_statements<'a>(
+fn evaluate_statements<'a, W: Write>(
     statements: &Vec<Statement<'a>>,
     env: &mut Environment<'a>,
+    writer: &mut W,
 ) -> Result<Option<Value<'a>>, Vec<EvaluationError<'a>>> {
     let mut errors = Vec::new();
     let mut result: Option<Value<'a>> = None;
     for statement in statements {
-        match eval(statement, env) {
+        match eval(statement, env, writer) {
             Ok(value) => result = value,
             Err(e)
                 if errors.is_empty() && matches!(e, Break | Return { .. }) =>
@@ -49,24 +50,26 @@ fn evaluate_statements<'a>(
     Ok(result)
 }
 
-fn eval<'a>(
+fn eval<'a, W: Write>(
     statement: &Statement<'a>,
     env: &mut Environment<'a>,
+    writer: &mut W,
 ) -> Result<Option<Value<'a>>, EvaluationError<'a>> {
     trace!("Eval");
     match statement {
         Statement::Expression(expr) => {
             trace!("Expression");
-            return visit(expr, env).map(Some);
+            return visit(expr, env, writer).map(Some);
         }
         Statement::Print(expr) => {
             trace!("Print");
-            println!("{}", visit(expr, env)?);
+            let output = visit(expr, env, writer)?;
+            writeln!(writer, "{output}").expect("Write to sink failed");
         }
         Statement::Declaration { name, expression } => {
             trace!("Declaration");
             if let Some(expr) = expression {
-                let value = Some(visit(expr, env)?);
+                let value = Some(visit(expr, env, writer)?);
                 env.define(name, value);
             } else {
                 env.define(name, None);
@@ -81,7 +84,7 @@ fn eval<'a>(
         Statement::Group(s) => {
             trace!("Group");
             env.narrow();
-            let result = evaluate_statements(s, env);
+            let result = evaluate_statements(s, env, writer);
             env.pop();
             result?;
         }
@@ -91,17 +94,17 @@ fn eval<'a>(
             false_branch,
         } => {
             trace!("If");
-            if as_bool(&visit(condition, env)?) {
+            if as_bool(&visit(condition, env, writer)?) {
                 trace!("If success");
-                eval(true_branch, env)?;
+                eval(true_branch, env, writer)?;
             } else if let Some(branch) = false_branch {
-                eval(branch, env)?;
+                eval(branch, env, writer)?;
             }
         }
         Statement::While { condition, body } => {
-            while as_bool(&visit(condition, env)?) {
+            while as_bool(&visit(condition, env, writer)?) {
                 trace!("Looping!");
-                let result = eval(body, env);
+                let result = eval(body, env, writer);
                 match result {
                     Err(Break) => return Ok(None),
                     Err(e) => return Err(e),
@@ -115,7 +118,7 @@ fn eval<'a>(
             value: value_expr,
         } => {
             let return_value = match value_expr {
-                Some(expr) => visit(expr, env)?,
+                Some(expr) => visit(expr, env, writer)?,
                 None => Value::Nil,
             };
 
@@ -138,15 +141,18 @@ fn define_function<'a>(
     }
 }
 
-fn visit<'a>(
+fn visit<'a, W: Write>(
     expr: &Expr<'a>,
     env: &mut Environment<'a>,
+    writer: &mut W,
 ) -> Result<Value<'a>, EvaluationError<'a>> {
     match &expr.kind {
         ExprKind::Literal(value) => Ok(value.clone()),
-        ExprKind::Unary(unary) => visit_unary(unary, expr.line, env),
-        ExprKind::Binary(binary) => visit_binary(binary, expr.line, env),
-        ExprKind::Grouping(expr) => visit(expr, env),
+        ExprKind::Unary(unary) => visit_unary(unary, expr.line, env, writer),
+        ExprKind::Binary(binary) => {
+            visit_binary(binary, expr.line, env, writer)
+        }
+        ExprKind::Grouping(expr) => visit(expr, env, writer),
         ExprKind::Identifier(name) => env.get(name).map_err(|err| match err {
             GetError::Undefined => UndefinedVariable {
                 name,
@@ -158,7 +164,7 @@ fn visit<'a>(
             },
         }),
         ExprKind::Assignment(assignment) => {
-            let value = visit(&assignment.expr, env)?;
+            let value = visit(&assignment.expr, env, writer)?;
             env.update(assignment.name, value.clone()).map_err(|()| {
                 UndefinedVariable {
                     name: assignment.name,
@@ -167,18 +173,19 @@ fn visit<'a>(
             })?;
             Ok(value)
         }
-        ExprKind::Logical(logical) => visit_logical(logical, env),
-        ExprKind::Call(call) => visit_call(call, expr.line, env),
+        ExprKind::Logical(logical) => visit_logical(logical, env, writer),
+        ExprKind::Call(call) => visit_call(call, expr.line, env, writer),
         ExprKind::Lambda(function) => Ok(define_function(function, env)),
     }
 }
 
-fn visit_unary<'a>(
+fn visit_unary<'a, W: Write>(
     unary: &Unary<'a>,
     line: usize,
     env: &mut Environment<'a>,
+    writer: &mut W,
 ) -> Result<Value<'a>, EvaluationError<'a>> {
-    let value = visit(&unary.expr, env)?;
+    let value = visit(&unary.expr, env, writer)?;
 
     match unary.operator {
         UnaryOperator::MINUS => match value {
@@ -197,13 +204,14 @@ fn visit_unary<'a>(
     clippy::string_add,
     reason = "Do not want to modify the original string inplace"
 )]
-fn visit_binary<'a>(
+fn visit_binary<'a, W: Write>(
     binary: &Binary<'a>,
     line: usize,
     env: &mut Environment<'a>,
+    writer: &mut W,
 ) -> Result<Value<'a>, EvaluationError<'a>> {
-    let left_value = visit(&binary.left, env)?;
-    let right_value = visit(&binary.right, env)?;
+    let left_value = visit(&binary.left, env, writer)?;
+    let right_value = visit(&binary.right, env, writer)?;
 
     match binary.operator {
         BinaryOperator::EQUAL_EQUAL => {
@@ -243,27 +251,33 @@ fn visit_binary<'a>(
     })
 }
 
-fn visit_logical<'a>(
+fn visit_logical<'a, W: Write>(
     logical: &Logical<'a>,
     env: &mut Environment<'a>,
+    writer: &mut W,
 ) -> Result<Value<'a>, EvaluationError<'a>> {
-    let lhs_value = visit(&logical.left, env)?;
+    let lhs_value = visit(&logical.left, env, writer)?;
     let lhs_truthy = as_bool(&lhs_value);
 
     match logical.operator {
-        LogicalOperator::OR if !lhs_truthy => visit(&logical.right, env),
-        LogicalOperator::AND if lhs_truthy => visit(&logical.right, env),
+        LogicalOperator::OR if !lhs_truthy => {
+            visit(&logical.right, env, writer)
+        }
+        LogicalOperator::AND if lhs_truthy => {
+            visit(&logical.right, env, writer)
+        }
         _ => Ok(lhs_value),
     }
 }
 
-fn visit_call<'a>(
+fn visit_call<'a, W: Write>(
     call: &Call<'a>,
     line: usize,
     env: &mut Environment<'a>,
+    writer: &mut W,
 ) -> Result<Value<'a>, EvaluationError<'a>> {
     trace!("Call");
-    let function = visit(&call.callee, env)?;
+    let function = visit(&call.callee, env, writer)?;
 
     let Value::Function {
         declaration:
@@ -288,7 +302,7 @@ fn visit_call<'a>(
     let arguments: Vec<Value<'a>> = call
         .arguments
         .iter()
-        .map(|arg| visit(arg, env))
+        .map(|arg| visit(arg, env, writer))
         .collect::<Result<_, _>>()?;
 
     match body {
@@ -301,7 +315,7 @@ fn visit_call<'a>(
                 env.define(params[index], Some(arguments[index].clone()));
             }
             trace!("Calling with {arguments:?}");
-            let result = eval(&statement, env);
+            let result = eval(&statement, env, writer);
             env.pop();
             env.pop();
 

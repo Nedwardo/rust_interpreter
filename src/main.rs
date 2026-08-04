@@ -1,76 +1,47 @@
-mod error_utils;
-use log::trace;
-mod evaluator;
-mod expressions;
-mod logger;
-mod parser;
-mod read_file_error;
-mod scanner;
-mod token;
-use crate::error_utils::HydratedStageError;
-use crate::parser::parse;
-use std::fmt::Display;
-mod token_type;
-use crate::evaluator::evaluate;
-use crate::logger::init as logger_init;
-use log::LevelFilter;
-use read_file_error::ReadFileError;
-use scanner::scan;
+use interpreter::{run, run_file};
 use std::env::args;
 use std::error::Error;
-use std::fs::read_to_string;
+use std::fmt;
+use std::io;
 use std::io::{Write as _, stdin, stdout};
-use std::path::Path;
+
+struct IoWriteAdapter<W>(pub W);
+
+#[allow(
+    clippy::map_err_ignore,
+    reason = "Type narrowing to marry std::io and std::fmt for testing and cli app"
+)]
+impl<W: io::Write> fmt::Write for IoWriteAdapter<W> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.0.write_all(s.as_bytes()).map_err(|_| fmt::Error)
+    }
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = args().collect();
 
-    logger_init(LevelFilter::Trace)?;
-
     match args.as_slice() {
         [_] => run_prompt(),
-        [_, file] => run_file(file),
+        [_, file] => run_file(file, &mut IoWriteAdapter(stdout())),
         _ => Err("Usage: jlox [script]".into()),
     }
 }
 
-fn run_file(script_address: &str) -> Result<(), Box<dyn Error>> {
-    let script_path = Path::new(script_address);
-    let file_contents =
-        read_to_string(script_path).map_err(|e| ReadFileError {
-            path: script_path.into(),
-            source: e,
-        })?;
-    run(&file_contents)?;
-    Ok(())
-}
-
 #[allow(clippy::print_stderr, reason = "cli app")]
 fn run_prompt() -> Result<(), Box<dyn Error>> {
-    let mut buffer = stdout();
+    let mut buffer = IoWriteAdapter(stdout());
     let mut line: String;
     loop {
         line = String::new();
         print!("> ");
-        buffer.flush()?;
+        buffer.0.flush()?;
         let _ = stdin().read_line(&mut line)?;
 
         line.truncate(line.len() - 1);
-        match run(&line) {
+        match run(&line, &mut buffer) {
             Ok(Some(result)) => println!("{result}\n"),
             Err(e) => eprintln!("{e}"),
             Ok(_) => {}
         }
     }
-}
-
-fn run(file: &str) -> Result<Option<impl Display + use<'_>>, Box<dyn Error>> {
-    let tokens = scan(file)
-        .map_err(|err| HydratedStageError::hydrate_errors(err, file))?;
-    let statements = parse(tokens)
-        .map_err(|err| HydratedStageError::hydrate_error(&err, file))?;
-    trace!("Statments: {statements:#?}");
-    Ok(evaluate(&statements).map_err(|err| {
-        Box::new(HydratedStageError::hydrate_errors(err, file))
-    })?)
 }

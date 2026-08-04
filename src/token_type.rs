@@ -1,3 +1,4 @@
+use crate::operator_subset;
 use core::fmt::{Debug, Display, Formatter};
 
 #[allow(
@@ -153,21 +154,22 @@ pub trait OperatorSubset<P: 'static>:
     const VARIANTS: &'static [P];
 }
 
+#[macro_export]
 macro_rules! operator_subset {
     ($name:ident, { $($variant:ident),* $(,)? }) => {
         #[derive(Copy, Clone, PartialEq, Eq, Debug)]
         #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
         pub enum $name { $($variant),* }
 
-        impl OperatorSubset<crate::token_type::TokenType> for $name {
-            const VARIANTS: &'static [crate::token_type::TokenType] = &[$(crate::token_type::TokenType::$variant),*];
+        impl OperatorSubset<$crate::token_type::TokenType> for $name {
+            const VARIANTS: &'static [$crate::token_type::TokenType] = &[$($crate::token_type::TokenType::$variant),*];
         }
 
-        impl std::convert::TryFrom<crate::token_type::TokenType> for $name {
+        impl std::convert::TryFrom<$crate::token_type::TokenType> for $name {
             type Error = ();
-            fn try_from(tt: crate::token_type::TokenType) -> std::result::Result<Self, ()> {
+            fn try_from(tt: $crate::token_type::TokenType) -> std::result::Result<Self, ()> {
                 match tt {
-                    $(crate::token_type::TokenType::$variant => Ok(Self::$variant),)*
+                    $($crate::token_type::TokenType::$variant => Ok(Self::$variant),)*
                     _ => Err(()),
                 }
             }
@@ -175,9 +177,8 @@ macro_rules! operator_subset {
 
          impl std::fmt::Display for $name {
             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-                match self { $(Self::$variant => std::fmt::Display::fmt(&crate::token_type::TokenType::$variant, f)),* }
+                match self { $(Self::$variant => std::fmt::Display::fmt(&$crate::token_type::TokenType::$variant, f)),* }
             }
         }
     };
 }
-pub(crate) use operator_subset;

@@ -42,5 +42,6 @@ pathbuf_init_then_push = "warn"
 non_zero_suggestions = "warn"
 
 [dependencies]
+gag = "1.0.0"
 log = {version = "0.4.33", features = ["std"]}
 

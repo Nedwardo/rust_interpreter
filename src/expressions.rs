@@ -1,5 +1,6 @@
 use crate::evaluator::environment::Scope;
-use crate::token_type::{OperatorSubset, operator_subset};
+use crate::operator_subset;
+use crate::token_type::OperatorSubset;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 

@@ -300,6 +300,7 @@ impl Location {
 #[cfg(test)]
 mod tokenizer_tests {
     use super::*;
+    use crate::error_utils::HydratedStageError;
     use crate::token::TokenValue;
     #[test]
     fn empty_input_yields_empty_output() {
@@ -376,7 +377,7 @@ mod tokenizer_tests {
         let lines: Vec<_> = tokens.iter().map(|t| t.line).collect();
 
         let expected_types = vec![TT::PLUS, TT::MINUS];
-        let expected_lines = vec![2, 4, 4];
+        let expected_lines = vec![2, 4];
 
         assert_eq!(types, expected_types);
         assert_eq!(lines, expected_lines);
@@ -421,7 +422,8 @@ mod tokenizer_tests {
 
     #[test]
     fn unterminated_string_is_error() {
-        let error = Scanner::new(r#""no end"#).scan_tokens().unwrap_err();
+        let program = "\"no end";
+        let error = Scanner::new(program).scan_tokens().unwrap_err();
         let expected_error_message = concat!(
             "Error during scanning: Unterminated string\n",
             r#"   1 | "no end"#,
@@ -430,12 +432,16 @@ mod tokenizer_tests {
             "\n"
         );
 
-        assert_eq!(error.to_string(), expected_error_message);
+        assert_eq!(
+            HydratedStageError::hydrate_errors(error, program).to_string(),
+            expected_error_message
+        );
     }
 
     #[test]
     fn lone_quote_is_unterminated_not_panic() {
-        let error = Scanner::new(r#"""#).scan_tokens().unwrap_err();
+        let program = "\"";
+        let error = Scanner::new(program).scan_tokens().unwrap_err();
         let expected_error_message = concat!(
             "Error during scanning: Unterminated string\n",
             r#"   1 | ""#,
@@ -444,7 +450,10 @@ mod tokenizer_tests {
             "\n"
         );
 
-        assert_eq!(error.to_string(), expected_error_message);
+        assert_eq!(
+            HydratedStageError::hydrate_errors(error, program).to_string(),
+            expected_error_message
+        );
     }
 
     #[test]
@@ -537,7 +546,8 @@ mod tokenizer_tests {
 
     #[test]
     fn multiple_errors_are_produced() {
-        let error = Scanner::new("@+`").scan_tokens().unwrap_err();
+        let program = "@+`";
+        let error = Scanner::new(program).scan_tokens().unwrap_err();
 
         let expected_error_message = concat!(
             "Error during scanning: Unexpected character\n",
@@ -549,7 +559,10 @@ mod tokenizer_tests {
             "     |   ^\n",
         );
 
-        assert_eq!(error.to_string(), expected_error_message);
+        assert_eq!(
+            HydratedStageError::hydrate_errors(error, program).to_string(),
+            expected_error_message
+        );
     }
 }
 
