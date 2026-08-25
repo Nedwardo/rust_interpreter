@@ -1,10 +1,13 @@
+use interpreter::logger::init as logger_init;
 use interpreter::{run, run_file};
+use log::LevelFilter;
 use std::env::args;
 use std::error::Error;
 use std::fmt;
 use std::io;
 use std::io::{Write as _, stdin, stdout};
 
+#[derive(Debug)]
 struct IoWriteAdapter<W>(pub W);
 
 #[allow(
@@ -18,6 +21,8 @@ impl<W: io::Write> fmt::Write for IoWriteAdapter<W> {
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
+    logger_init(LevelFilter::Trace)?;
+
     let args: Vec<String> = args().collect();
 
     match args.as_slice() {

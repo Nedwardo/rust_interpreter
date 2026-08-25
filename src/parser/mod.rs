@@ -438,7 +438,7 @@ impl<'a> Parser<'a> {
         &mut self,
         current_precedence: usize,
     ) -> Result<Expr<'a>, Error> {
-        debug!("Logical");
+        debug!("Logical: {:?}", self.tokens.peek());
         let mut lhs = self.build_binary(current_precedence)?;
 
         while let Ok((infix, line)) = self.tokens.peek_token_subset() {

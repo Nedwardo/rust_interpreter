@@ -31,6 +31,7 @@ pub enum Statement<'a> {
 }
 
 impl<'a> Statement<'a> {
+    #[must_use]
     pub fn r#for(
         initialiser: Option<Self>,
         condition: Option<Expr<'a>>,
@@ -154,6 +155,7 @@ operator_subset!(BinaryOperator, {
 operator_subset!(LogicalOperator, {OR, AND});
 
 impl<'a> Expr<'a> {
+    #[must_use]
     pub const fn logical(
         left: Box<Self>,
         operator: LogicalOperator,
@@ -170,6 +172,7 @@ impl<'a> Expr<'a> {
         }
     }
 
+    #[must_use]
     pub const fn binary(
         left: Box<Self>,
         operator: BinaryOperator,
@@ -186,6 +189,7 @@ impl<'a> Expr<'a> {
         }
     }
 
+    #[must_use]
     pub const fn unary(
         operator: UnaryOperator,
         expr: Box<Self>,
@@ -197,6 +201,7 @@ impl<'a> Expr<'a> {
         }
     }
 
+    #[must_use]
     pub const fn literal(value: Value<'a>, line: usize) -> Self {
         Expr {
             line,
@@ -204,6 +209,7 @@ impl<'a> Expr<'a> {
         }
     }
 
+    #[must_use]
     pub const fn identifier(identifier: &'a str, line: usize) -> Self {
         Expr {
             line,
@@ -211,6 +217,7 @@ impl<'a> Expr<'a> {
         }
     }
 
+    #[must_use]
     pub const fn grouping(grouping: Box<Self>, line: usize) -> Self {
         Expr {
             line,
@@ -218,6 +225,7 @@ impl<'a> Expr<'a> {
         }
     }
 
+    #[must_use]
     pub const fn assignment(
         name: &'a str,
         expr: Box<Self>,
@@ -229,6 +237,7 @@ impl<'a> Expr<'a> {
         }
     }
 
+    #[must_use]
     pub const fn call(callee: Box<Self>, arguments: Vec<Self>) -> Self {
         Expr {
             line: callee.line,
@@ -236,6 +245,7 @@ impl<'a> Expr<'a> {
         }
     }
 
+    #[must_use]
     pub const fn lambda(function: Function<'a>, line: usize) -> Self {
         Expr {
             line,
@@ -258,6 +268,7 @@ impl Display for Value<'_> {
 }
 
 impl Value<'_> {
+    #[must_use]
     pub const fn type_name(&self) -> &'static str {
         match self {
             Self::String(..) => "String",
@@ -268,6 +279,7 @@ impl Value<'_> {
         }
     }
 
+    #[must_use]
     pub fn cast_to_string(&self) -> String {
         match self {
             Self::String(value) => value.clone(),

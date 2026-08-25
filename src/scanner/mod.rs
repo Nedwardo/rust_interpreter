@@ -4,6 +4,7 @@ use crate::token::TokenValue as TV;
 use crate::token_type::TokenType;
 use crate::token_type::TokenType as TT;
 use core::str::Chars;
+use log::debug;
 use scanner_error::ScannerError as Error;
 
 pub fn scan(source: &'_ str) -> Result<Vec<Token<'_>>, Vec<Error<'_>>> {
@@ -45,6 +46,7 @@ impl<'a> Scanner<'a> {
         }
 
         if errors.is_empty() {
+            debug!("TT: {tokens:?}");
             Ok(tokens)
         } else {
             Err(errors)

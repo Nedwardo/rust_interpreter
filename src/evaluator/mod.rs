@@ -1,9 +1,9 @@
 pub mod environment;
 use log::trace;
+use std::fmt::Debug;
 pub mod evaluation_error;
 mod globals;
 use std::fmt::Write;
-use std::rc::Rc;
 
 use crate::evaluator::environment::{Environment, GetError};
 use crate::evaluator::evaluation_error::EvaluationError;
@@ -18,15 +18,15 @@ use crate::expressions::{
 };
 use crate::expressions::{Function, FunctionKind, Statement};
 
-pub fn evaluate<'a, W: Write>(
+pub fn evaluate<'a, W: Write + Debug>(
     statements: &Vec<Statement<'a>>,
     writer: &mut W,
 ) -> Result<Option<Value<'a>>, Vec<EvaluationError<'a>>> {
-    trace!("Begining eval");
+    trace!("Begining eval {statements:?}");
     evaluate_statements(statements, &mut Environment::new(), writer)
 }
 
-fn evaluate_statements<'a, W: Write>(
+fn evaluate_statements<'a, W: Write + Debug>(
     statements: &Vec<Statement<'a>>,
     env: &mut Environment<'a>,
     writer: &mut W,
@@ -50,7 +50,7 @@ fn evaluate_statements<'a, W: Write>(
     Ok(result)
 }
 
-fn eval<'a, W: Write>(
+fn eval<'a, W: Write + Debug>(
     statement: &Statement<'a>,
     env: &mut Environment<'a>,
     writer: &mut W,
@@ -137,11 +137,11 @@ fn define_function<'a>(
 ) -> Value<'a> {
     Value::Function {
         declaration: declaration.clone(),
-        closure: Rc::clone(env.top()),
+        closure: env.top().clone(),
     }
 }
 
-fn visit<'a, W: Write>(
+fn visit<'a, W: Write + Debug>(
     expr: &Expr<'a>,
     env: &mut Environment<'a>,
     writer: &mut W,
@@ -179,7 +179,7 @@ fn visit<'a, W: Write>(
     }
 }
 
-fn visit_unary<'a, W: Write>(
+fn visit_unary<'a, W: Write + Debug>(
     unary: &Unary<'a>,
     line: usize,
     env: &mut Environment<'a>,
@@ -204,7 +204,7 @@ fn visit_unary<'a, W: Write>(
     clippy::string_add,
     reason = "Do not want to modify the original string inplace"
 )]
-fn visit_binary<'a, W: Write>(
+fn visit_binary<'a, W: Write + Debug>(
     binary: &Binary<'a>,
     line: usize,
     env: &mut Environment<'a>,
@@ -251,7 +251,7 @@ fn visit_binary<'a, W: Write>(
     })
 }
 
-fn visit_logical<'a, W: Write>(
+fn visit_logical<'a, W: Write + Debug>(
     logical: &Logical<'a>,
     env: &mut Environment<'a>,
     writer: &mut W,
@@ -270,7 +270,7 @@ fn visit_logical<'a, W: Write>(
     }
 }
 
-fn visit_call<'a, W: Write>(
+fn visit_call<'a, W: Write + Debug>(
     call: &Call<'a>,
     line: usize,
     env: &mut Environment<'a>,

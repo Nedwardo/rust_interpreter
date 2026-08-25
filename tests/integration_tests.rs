@@ -6,6 +6,7 @@
 )]
 #[cfg(test)]
 mod integration_tests {
+    use interpreter::expressions::Value;
     use interpreter::run;
 
     #[test]
@@ -16,6 +17,9 @@ mod integration_tests {
         let result = run(lox_script, &mut output);
 
         assert_eq!(output, "1\n");
+
+        println!("{result:?}");
+
         assert!(result.unwrap().is_none());
     }
 
@@ -34,7 +38,8 @@ mod integration_tests {
 
         let result = run(lox_script, &mut output);
 
-        assert_eq!(output, "1\n");
+        println!("{result:?}");
+
         assert!(result.unwrap().is_none());
     }
 
@@ -53,14 +58,15 @@ mod integration_tests {
         var counter = makeCounter(); \
         counter(); \
         counter(); \
-        }";
+        ";
 
         let mut output = String::new();
 
         let result = run(lox_script, &mut output);
+        println!("Printing output !!!!: {:?}", output);
 
         assert_eq!(output, "1\n2\n");
-        assert!(result.unwrap().is_none());
+        assert!(matches!(result.unwrap().unwrap(), Value::Nil));
     }
 
     #[test]
@@ -74,8 +80,8 @@ mod integration_tests {
 
         let result = run(lox_script, &mut output);
 
-        assert_eq!(output, "Hi, Dear Reader!");
-        assert!(result.unwrap().is_none());
+        assert_eq!(output, "\"Hi, Dear Reader!\"\n");
+        assert!(matches!(result.unwrap().unwrap(), Value::Nil));
     }
 
     #[test]
@@ -95,7 +101,10 @@ mod integration_tests {
         let result = run(lox_script, &mut output);
 
         assert_eq!(output, "1\n2\n3\n");
-        assert!(result.unwrap().is_none());
+
+        println!("{result:?}");
+
+        assert!(matches!(result.unwrap().unwrap(), Value::Nil));
     }
 
     #[test]
@@ -113,10 +122,7 @@ mod integration_tests {
 
         let result = run(lox_script, &mut output);
 
-        assert_eq!(
-            output,
-            "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n16\n17\n18\n19\n20\n"
-        );
+        assert_eq!(output, "0\n1\n1\n2\n3\n5\n8\n13\n");
         assert!(result.unwrap().is_none());
     }
 

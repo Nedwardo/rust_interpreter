@@ -18,6 +18,9 @@ impl log::Log for SimpleLogger {
     fn flush(&self) {}
 }
 
+/// # Errors
+///
+/// Will err if the logger fails to be set
 pub fn init(level: LevelFilter) -> Result<(), SetLoggerError> {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(level))
 }
