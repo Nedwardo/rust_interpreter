@@ -1,4 +1,4 @@
-use crate::evaluator::environment::Scope;
+use crate::evaluator::environment::Frame;
 use crate::operator_subset;
 use crate::token_type::OperatorSubset;
 use std::fmt;
@@ -83,7 +83,7 @@ pub enum ExprKind<'a> {
 pub enum Value<'a> {
     Function {
         declaration: Function<'a>,
-        closure: Scope<'a>,
+        closure: Frame<'a>,
     },
     String(String),
     Number(f64),

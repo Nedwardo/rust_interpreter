@@ -1,15 +1,22 @@
 use crate::evaluator::globals::define_globals;
 use crate::expressions::Value;
-use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::rc::Rc;
 
-#[derive(Clone)]
-pub struct Scope<'a>(Rc<RefCell<HashMap<&'a str, Option<Value<'a>>>>>);
+#[derive(Eq, Hash, PartialEq)]
+pub struct VariableBinding<'a> {
+    pub line: usize,
+    pub name: &'a str,
+}
 
-impl<'a> Scope<'a> {
+pub type LookupMap<'a> = HashMap<VariableBinding<'a>, usize>;
+
+#[derive(Clone)]
+pub struct Frame<'a>(Rc<RefCell<HashMap<&'a str, Option<Value<'a>>>>>);
+
+impl<'a> Frame<'a> {
     pub fn new() -> Self {
         Self(Rc::new(RefCell::new(HashMap::new())))
     }
@@ -33,14 +40,16 @@ impl<'a> Scope<'a> {
     }
 }
 
-impl Debug for Scope<'_> {
+impl Debug for Frame<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("Scope").field(&self.0).finish()
+        f.debug_tuple("Frame").field(&self.0).finish()
     }
 }
 
 pub struct Environment<'a> {
-    scopes: Vec<Scope<'a>>,
+    frames: Vec<Frame<'a>>,
+    locals: LookupMap<'a>,
+    globals: HashMap<&'a str, Option<Value<'a>>>,
 }
 
 pub enum GetError {
@@ -49,36 +58,38 @@ pub enum GetError {
 }
 
 impl<'a> Environment<'a> {
-    pub fn new() -> Self {
+    pub fn new(locals: LookupMap<'a>) -> Self {
         let mut env = Environment {
-            scopes: vec![Scope::new()],
+            locals,
+            frames: vec![Frame::new()],
+            globals: HashMap::new(),
         };
         define_globals(&mut env);
         env
     }
 
     pub fn narrow(&mut self) {
-        self.scopes.push(Scope::new());
+        self.frames.push(Frame::new());
     }
 
-    pub fn push(&mut self, scope: Scope<'a>) {
-        self.scopes.push(scope);
+    pub fn push(&mut self, frame: Frame<'a>) {
+        self.frames.push(frame);
     }
 
-    pub fn pop(&mut self) -> Scope<'a> {
-        self.scopes
+    pub fn pop(&mut self) -> Frame<'a> {
+        self.frames
             .pop()
             .expect("One hashmap should be initalised at all times")
     }
 
-    pub fn top(&self) -> &Scope<'a> {
-        self.scopes
+    pub fn top(&self) -> &Frame<'a> {
+        self.frames
             .last()
             .expect("One hashmap should be initalised at all times")
     }
 
     pub fn define(&mut self, name: &'a str, value: Option<Value<'a>>) {
-        self.scopes
+        self.frames
             .last_mut()
             .expect("One hashmap should be initalised at all times")
             .insert(name, value);
@@ -89,32 +100,38 @@ impl<'a> Environment<'a> {
         name: &'a str,
         value: Value<'a>,
     ) -> Result<(), ()> {
-        for scope in self.scopes.iter_mut().rev() {
-            if scope.contains_key(name) {
-                scope.insert(name, Some(value));
+        for frame in self.frames.iter_mut().rev() {
+            if frame.contains_key(name) {
+                frame.insert(name, Some(value));
                 return Ok(());
             }
         }
         Err(())
     }
 
-    pub fn get(&self, name: &'a str) -> Result<Value<'a>, GetError> {
-        for scope in self.scopes.iter().rev() {
-            let value = scope.get(name);
-            if matches!(value, Err(GetError::Undefined)) {
-                continue;
-            }
-
-            return value;
-        }
-        Err(GetError::Undefined)
+    pub fn get(
+        &self,
+        binding: &VariableBinding<'a>,
+    ) -> Result<Value<'a>, GetError> {
+        let distance = self.locals.get(binding);
+        distance.map_or_else(
+            || {
+                self.globals.get(binding.name).map_or(
+                    Err(GetError::Undefined),
+                    |value| {
+                        value
+                            .as_ref()
+                            .map_or(Err(GetError::Uninitalised), |v| {
+                                Ok(v.clone())
+                            })
+                    },
+                )
+            },
+            |dist| self.frames[self.frames.len() - dist].get(binding.name),
+        )
     }
 
     pub fn add_global(&mut self, name: &'a str, value: Value<'a>) {
-        self.scopes
-            .first_mut()
-            .expect("One hashmap should initalised at all times")
-            .borrow_mut()
-            .insert(name, Some(value));
+        self.globals.insert(name, Some(value));
     }
 }

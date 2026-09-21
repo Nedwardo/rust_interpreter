@@ -6,6 +6,7 @@ pub mod expressions;
 pub mod logger;
 mod parser;
 mod read_file_error;
+mod resolver;
 mod scanner;
 mod token;
 use crate::error_utils::HydratedStageError;
@@ -13,18 +14,19 @@ use crate::expressions::Value;
 use crate::parser::parse;
 mod token_type;
 use crate::evaluator::evaluate;
+use crate::resolver::resolve;
 use read_file_error::ReadFileError;
 use scanner::scan;
 use std::error::Error;
 use std::fmt;
 use std::fs::read_to_string;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// # Errors
 ///
 /// Will err if the program errors, or if the file is invalid
 pub fn run_file<W: fmt::Write + Debug>(
-    script_address: &str,
+    script_address: &PathBuf,
     writer: &mut W,
 ) -> Result<(), Box<dyn Error>> {
     let script_path = Path::new(script_address);
@@ -49,7 +51,9 @@ pub fn run<'a, W: fmt::Write + Debug>(
     let statements = parse(tokens)
         .map_err(|err| HydratedStageError::hydrate_error(&err, script))?;
     trace!("Statments: {statements:#?}");
-    Ok(evaluate(&statements, writer).map_err(|err| {
+    let locals = resolve(&statements)
+        .map_err(|err| HydratedStageError::hydrate_error(&err, script))?;
+    Ok(evaluate(&statements, locals, writer).map_err(|err| {
         Box::new(HydratedStageError::hydrate_errors(err, script))
     })?)
 }

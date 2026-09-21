@@ -1,4 +1,4 @@
-use crate::evaluator::environment::Scope;
+use crate::evaluator::environment::Frame;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
@@ -6,8 +6,8 @@ use crate::{
     expressions::{Function, FunctionKind, Value},
 };
 
-pub fn define_globals(scope: &mut Environment<'_>) {
-    scope.add_global(
+pub fn define_globals(environment: &mut Environment<'_>) {
+    environment.add_global(
         "clock",
         Value::Function {
             declaration: Function {
@@ -15,7 +15,7 @@ pub fn define_globals(scope: &mut Environment<'_>) {
                 params: vec![],
                 name: "clock",
             },
-            closure: Scope::new(),
+            closure: Frame::new(),
         },
     );
 }

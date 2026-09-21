@@ -1,7 +1,7 @@
+use clap::Parser;
+use clap_verbosity::Verbosity;
 use interpreter::logger::init as logger_init;
 use interpreter::{run, run_file};
-use log::LevelFilter;
-use std::env::args;
 use std::error::Error;
 use std::fmt;
 use std::io;
@@ -20,16 +20,22 @@ impl<W: io::Write> fmt::Write for IoWriteAdapter<W> {
     }
 }
 
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    file_path: Option<std::path::PathBuf>,
+
+    #[command(flatten)]
+    verbose: Verbosity,
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
-    logger_init(LevelFilter::Trace)?;
+    let args = Args::parse();
+    logger_init(args.verbose.log_level_filter())?;
 
-    let args: Vec<String> = args().collect();
-
-    match args.as_slice() {
-        [_] => run_prompt(),
-        [_, file] => run_file(file, &mut IoWriteAdapter(stdout())),
-        _ => Err("Usage: jlox [script]".into()),
-    }
+    args.file_path.map_or_else(run_prompt, |file| {
+        run_file(&file, &mut IoWriteAdapter(stdout()))
+    })
 }
 
 #[allow(clippy::print_stderr, reason = "cli app")]

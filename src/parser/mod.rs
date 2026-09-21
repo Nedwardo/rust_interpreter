@@ -40,6 +40,7 @@ pub const fn infix_precedence(token_type: BinaryOp) -> (usize, usize) {
 
 operator_subset!(Keyword, {VAR, FUN, PRINT, IF, WHILE, FOR, BREAK, RETURN} );
 
+#[derive(Clone)]
 struct TokenIter<'a>(IntoIter<Token<'a>>);
 impl<'a> Iterator for TokenIter<'a> {
     type Item = Token<'a>;
@@ -48,6 +49,7 @@ impl<'a> Iterator for TokenIter<'a> {
     }
 }
 
+#[derive(Clone)]
 struct TokenCursor<'a> {
     tokens: Peekable<TokenIter<'a>>,
     checked_tokens: Vec<TT>,

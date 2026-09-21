@@ -5,6 +5,7 @@ pub mod evaluation_error;
 mod globals;
 use std::fmt::Write;
 
+use crate::evaluator::environment::VariableBinding;
 use crate::evaluator::environment::{Environment, GetError};
 use crate::evaluator::evaluation_error::EvaluationError;
 use crate::evaluator::evaluation_error::EvaluationError::{
@@ -12,18 +13,19 @@ use crate::evaluator::evaluation_error::EvaluationError::{
     UnsupportedBinaryOperand, UnsupportedUnaryOperand,
 };
 
+use crate::evaluator::environment::LookupMap;
 use crate::expressions::{
-    Binary, BinaryOperator, Call, Expr, ExprKind, Logical, LogicalOperator,
-    Unary, UnaryOperator, Value,
+    Binary, BinaryOperator, Call, Expr, ExprKind, Function, FunctionKind,
+    Logical, LogicalOperator, Statement, Unary, UnaryOperator, Value,
 };
-use crate::expressions::{Function, FunctionKind, Statement};
 
 pub fn evaluate<'a, W: Write + Debug>(
     statements: &Vec<Statement<'a>>,
+    locals: LookupMap<'a>,
     writer: &mut W,
 ) -> Result<Option<Value<'a>>, Vec<EvaluationError<'a>>> {
     trace!("Begining eval {statements:?}");
-    evaluate_statements(statements, &mut Environment::new(), writer)
+    evaluate_statements(statements, &mut Environment::new(locals), writer)
 }
 
 fn evaluate_statements<'a, W: Write + Debug>(
@@ -153,16 +155,23 @@ fn visit<'a, W: Write + Debug>(
             visit_binary(binary, expr.line, env, writer)
         }
         ExprKind::Grouping(expr) => visit(expr, env, writer),
-        ExprKind::Identifier(name) => env.get(name).map_err(|err| match err {
-            GetError::Undefined => UndefinedVariable {
+        ExprKind::Identifier(name) => {
+            let binding = VariableBinding {
                 name,
                 line: expr.line,
-            },
-            GetError::Uninitalised => UnitialisedVariable {
-                name,
-                line: expr.line,
-            },
-        }),
+            };
+
+            env.get(&binding).map_err(|err| match err {
+                GetError::Undefined => UndefinedVariable {
+                    name,
+                    line: expr.line,
+                },
+                GetError::Uninitalised => UnitialisedVariable {
+                    name,
+                    line: expr.line,
+                },
+            })
+        }
         ExprKind::Assignment(assignment) => {
             let value = visit(&assignment.expr, env, writer)?;
             env.update(assignment.name, value.clone()).map_err(|()| {
