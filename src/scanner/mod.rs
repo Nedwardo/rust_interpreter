@@ -1,13 +1,14 @@
 mod scanner_error;
+use crate::token::Span;
 use crate::token::Token;
-use crate::token::TokenValue as TV;
-use crate::token_type::TokenType;
+use crate::token_type::KeywordToken as KT;
+use crate::token_type::LiteralToken as LT;
 use crate::token_type::TokenType as TT;
 use core::str::Chars;
 use log::debug;
 use scanner_error::ScannerError as Error;
 
-pub fn scan(source: &'_ str) -> Result<Vec<Token<'_>>, Vec<Error<'_>>> {
+pub fn scan(source: &'_ str) -> Result<Vec<Token>, Vec<Error>> {
     Scanner::new(source).scan_tokens()
 }
 
@@ -17,23 +18,17 @@ pub struct Scanner<'a> {
 
 pub struct Cursor<'a> {
     source: &'a str,
-    location: Location,
-}
-
-#[derive(Clone, Copy)]
-pub struct Location {
-    pub index: usize,
-    pub line: usize,
+    index: usize,
 }
 
 impl<'a> Scanner<'a> {
-    fn new(source: &'a str) -> Self {
+    const fn new(source: &'a str) -> Self {
         Scanner {
             iter: Cursor::new(source),
         }
     }
 
-    fn scan_tokens(&mut self) -> Result<Vec<Token<'a>>, Vec<Error<'a>>> {
+    fn scan_tokens(&mut self) -> Result<Vec<Token>, Vec<Error>> {
         let mut tokens = Vec::new();
         let mut errors = Vec::new();
         while let Some(character) = self.iter.first() {
@@ -53,31 +48,31 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn scan_token(
-        &mut self,
-        character: char,
-    ) -> Result<Option<Token<'a>>, Error<'a>> {
+    fn scan_token(&mut self, character: char) -> Result<Option<Token>, Error> {
         let token = match character {
-            '(' => self.build_single_char_token(TT::LEFT_PAREN),
-            ')' => self.build_single_char_token(TT::RIGHT_PAREN),
-            '{' => self.build_single_char_token(TT::LEFT_BRACE),
-            '}' => self.build_single_char_token(TT::RIGHT_BRACE),
-            ',' => self.build_single_char_token(TT::COMMA),
-            '.' => self.build_single_char_token(TT::DOT),
-            '-' => self.build_single_char_token(TT::MINUS),
-            '+' => self.build_single_char_token(TT::PLUS),
-            ';' => self.build_single_char_token(TT::SEMICOLON),
-            '*' => self.build_single_char_token(TT::STAR),
-            '?' => self.build_single_char_token(TT::QUESTION_MARK),
-            ':' => self.build_single_char_token(TT::COLON),
+            '(' => self.build_single_char_token(KT::LeftParen),
+            ')' => self.build_single_char_token(KT::RightParen),
+            '{' => self.build_single_char_token(KT::LeftBrace),
+            '}' => self.build_single_char_token(KT::RightBrace),
+            ',' => self.build_single_char_token(KT::Comma),
+            '.' => self.build_single_char_token(KT::Dot),
+            '-' => self.build_single_char_token(KT::Minus),
+            '+' => self.build_single_char_token(KT::Plus),
+            ';' => self.build_single_char_token(KT::Semicolon),
+            '*' => self.build_single_char_token(KT::Star),
+            '?' => self.build_single_char_token(KT::QuestionMark),
+            ':' => self.build_single_char_token(KT::Colon),
 
-            '!' => self.build_compound('=', TT::BANG_EQUAL, TT::BANG),
-            '=' => self.build_compound('=', TT::EQUAL_EQUAL, TT::EQUAL),
-            '<' => self.build_compound('=', TT::LESS_EQUAL, TT::LESS),
-            '>' => self.build_compound('=', TT::GREATER_EQUAL, TT::GREATER),
+            '!' => self.build_compound('=', KT::BangEqual, KT::Bang),
+            '=' => self.build_compound('=', KT::EqualEqual, KT::Equal),
+            '<' => self.build_compound('=', KT::LessEqual, KT::Less),
+            '>' => self.build_compound('=', KT::GreaterEqual, KT::Greater),
 
-            '/' if self.iter.second() == Some('/') => self.build_comment(),
-            '/' => self.build_single_char_token(TT::SLASH),
+            '/' if self.iter.second() == Some('/') => {
+                self.iter.consume_comment();
+                return Ok(None);
+            }
+            '/' => self.build_single_char_token(KT::Slash),
             ' ' | '\r' | '\t' | '\n' => {
                 self.iter.pop();
                 return Ok(None);
@@ -90,108 +85,71 @@ impl<'a> Scanner<'a> {
         Ok(Some(token))
     }
 
-    fn build_single_char_token(&mut self, token_type: TokenType) -> Token<'a> {
-        self.build_sized_token(token_type, 1)
+    fn build_single_char_token(&mut self, keyword_token: KT) -> Token {
+        self.build_sized_token(TT::Keyword(keyword_token), 1)
     }
 
-    fn build_sized_token(
-        &mut self,
-        token_type: TokenType,
-        size: usize,
-    ) -> Token<'a> {
-        let _ = self.iter.consume_chars(size);
-        Token::new(token_type, self.iter.line())
+    fn build_sized_token(&mut self, token_type: TT, size: usize) -> Token {
+        let span = self.iter.consume_chars(size);
+        Token::new(token_type, span)
     }
 
     fn build_compound(
         &mut self,
         char_flag: char,
-        two_char_token: TokenType,
-        one_char_token: TokenType,
-    ) -> Token<'a> {
+        two_char_token: KT,
+        one_char_token: KT,
+    ) -> Token {
         if self.iter.second() == Some(char_flag) {
-            self.build_sized_token(two_char_token, 2)
+            self.build_sized_token(TT::Keyword(two_char_token), 2)
         } else {
             self.build_single_char_token(one_char_token)
         }
     }
 
-    fn build_string(&mut self) -> Result<Token<'a>, Error<'a>> {
-        let line = self.iter.line();
-        let (lexeme, success) = self.iter.consume_string();
+    fn build_string(&mut self) -> Result<Token, Error> {
+        let (span, success) = self.iter.consume_string();
         if !success {
             return Err(Error {
-                line,
                 message: "Unterminated string",
-                error_location: Some(lexeme),
+                error_location: span,
             });
         }
 
-        debug_assert!(
-            lexeme.is_char_boundary(1)
-                && lexeme.is_char_boundary(lexeme.len() - 1),
-            r#"The first and last chars are '"'"#
-        );
-        let literal_value = TV::String(&lexeme[1..lexeme.len() - 1]);
-        Ok(Token::new_value(TT::STRING, literal_value, line))
+        Ok(Token::new(TT::Literal(LT::String), span))
     }
 
-    fn build_number(&mut self) -> Token<'a> {
-        let lexeme = self.iter.consume_number();
-        let value = TV::Number(
-            lexeme
-                .parse::<f64>()
-                .expect("Consume number guarantees valid float syntax"),
-        );
-        Token::new_value(TT::NUMBER, value, self.iter.line())
+    fn build_number(&mut self) -> Token {
+        let span = self.iter.consume_number();
+        Token::new(TT::Literal(LT::Number), span)
     }
 
-    fn build_identifier(&mut self) -> Token<'a> {
-        let lexeme = self.iter.consume_identifier();
+    fn build_identifier(&mut self) -> Token {
+        let (span, lexeme) = self.iter.consume_identifier();
         if let Some(keyword) = TT::from_lexeme(lexeme) {
-            if let Some(value) = TV::from_keyword(keyword) {
-                return Token::new_value(keyword, value, self.iter.line());
-            }
-            return Token::new(keyword, self.iter.line());
+            return Token::new(keyword, span);
         }
 
-        Token::new_value(
-            TT::IDENTIFIER,
-            TV::Identifier(lexeme),
-            self.iter.line(),
-        )
+        Token::new(TT::Literal(LT::Identifier), span)
     }
 
-    fn scan_unexpected(&mut self) -> Error<'a> {
+    fn scan_unexpected(&mut self) -> Error {
         let character = self.iter.consume_chars(1);
         Error {
-            line: self.iter.line(),
             message: "Unexpected character",
-            error_location: Some(character),
+            error_location: character,
         }
-    }
-
-    fn build_comment(&mut self) -> Token<'a> {
-        let lexeme = self.iter.consume_comment();
-        Token::new_value(TT::COMMENT, TV::Comment(lexeme), self.iter.line())
     }
 }
 
 impl<'a> Cursor<'a> {
-    fn new(source: &'a str) -> Self {
-        Self {
-            source,
-            location: Location::default(),
-        }
-    }
-
-    const fn line(&self) -> usize {
-        self.location.line
+    const fn new(source: &'a str) -> Self {
+        Self { source, index: 0 }
     }
 
     fn remaining(&self) -> &'a str {
-        debug_assert!(self.source.is_char_boundary(self.location.index));
-        &self.source[self.location.index..]
+        debug_assert!(self.source.is_char_boundary(self.index));
+        &self.source[self.index..]
     }
 
     fn chars(&self) -> Chars<'a> {
@@ -206,23 +164,18 @@ impl<'a> Cursor<'a> {
         self.chars().nth(1)
     }
 
-    fn slice_from(&self, location: Location) -> &'a str {
-        debug_assert!(self.source.is_char_boundary(location.index));
-        &self.source[location.index..self.location.index]
-    }
-
-    fn consume_chars(&mut self, n: usize) -> &'a str {
-        let start = self.location;
+    fn consume_chars(&mut self, n: usize) -> Span {
+        let start = self.index;
         for character in self.remaining().chars().take(n) {
-            self.location.bump(character);
+            self.index += character.len_utf8();
         }
-        self.slice_from(start)
+        (start, self.index)
     }
 
     fn pop(&mut self) -> Option<char> {
         let result = self.first();
         if let Some(character) = result {
-            self.location.bump(character);
+            self.index += character.len_utf8();
         }
         result
     }
@@ -234,12 +187,12 @@ impl<'a> Cursor<'a> {
             if !predicate(character) {
                 break;
             }
-            self.location.bump(character);
+            self.index += character.len_utf8();
         }
     }
 
-    fn consume_string(&mut self) -> (&'a str, bool) {
-        let start = self.location;
+    fn consume_string(&mut self) -> (Span, bool) {
+        let start = self.index;
 
         let first = self.pop();
         debug_assert_eq!(first, Some('"'));
@@ -247,11 +200,11 @@ impl<'a> Cursor<'a> {
         self.advance_while(|c| c != '"');
         let terminated_by_quote = self.pop().is_some();
 
-        (self.slice_from(start), terminated_by_quote)
+        ((start, self.index), terminated_by_quote)
     }
 
-    fn consume_number(&mut self) -> &'a str {
-        let start = self.location;
+    fn consume_number(&mut self) -> Span {
+        let start = self.index;
 
         self.advance_while(|c| c.is_ascii_digit());
 
@@ -261,35 +214,19 @@ impl<'a> Cursor<'a> {
             self.pop();
             self.advance_while(|c| c.is_ascii_digit());
         }
-        self.slice_from(start)
+        (start, self.index)
     }
 
-    fn consume_identifier(&mut self) -> &'a str {
-        let start = self.location;
+    fn consume_identifier(&mut self) -> (Span, &'a str) {
+        let start = self.index;
         self.advance_while(|c| c.is_ascii_alphanumeric() || c == '_');
-        self.slice_from(start)
+        ((start, self.index), &self.source[start..self.index])
     }
 
-    fn consume_comment(&mut self) -> &'a str {
-        let start = self.location;
+    fn consume_comment(&mut self) -> Span {
+        let start = self.index;
         self.advance_while(|c| c != '\n');
-        self.slice_from(start)
-    }
-}
-
-impl Default for Location {
-    fn default() -> Self {
-        Self { index: 0, line: 1 }
-    }
-}
-
-impl Location {
-    pub const fn bump(&mut self, character: char) {
-        self.index += character.len_utf8();
-
-        if character == '\n' {
-            self.line += 1;
-        }
+        (start, self.index)
     }
 }
 
@@ -303,7 +240,6 @@ impl Location {
 mod tokenizer_tests {
     use super::*;
     use crate::error_utils::HydratedStageError;
-    use crate::token::TokenValue;
     #[test]
     fn empty_input_yields_empty_output() {
         let tokens = Scanner::new("").scan_tokens().unwrap();
@@ -314,19 +250,19 @@ mod tokenizer_tests {
     #[test]
     fn single_char_tokens() {
         let tokens = Scanner::new("(){},.-+;*").scan_tokens().unwrap();
-        let types: Vec<_> = tokens.into_iter().map(|t| t.kind).collect();
+        let types: Vec<_> = tokens.into_iter().map(|t| t.token_kind).collect();
 
         let expected_types = vec![
-            TT::LEFT_PAREN,
-            TT::RIGHT_PAREN,
-            TT::LEFT_BRACE,
-            TT::RIGHT_BRACE,
-            TT::COMMA,
-            TT::DOT,
-            TT::MINUS,
-            TT::PLUS,
-            TT::SEMICOLON,
-            TT::STAR,
+            TT::Keyword(KT::LeftParen),
+            TT::Keyword(KT::RightParen),
+            TT::Keyword(KT::LeftBrace),
+            TT::Keyword(KT::RightBrace),
+            TT::Keyword(KT::Comma),
+            TT::Keyword(KT::Dot),
+            TT::Keyword(KT::Minus),
+            TT::Keyword(KT::Plus),
+            TT::Keyword(KT::Semicolon),
+            TT::Keyword(KT::Star),
         ];
 
         assert_eq!(types, expected_types);
@@ -335,17 +271,17 @@ mod tokenizer_tests {
     #[test]
     fn compound_operators_prefer_two_char() {
         let tokens = Scanner::new("!= == <= >= ! = < >").scan_tokens().unwrap();
-        let types: Vec<_> = tokens.into_iter().map(|t| t.kind).collect();
+        let types: Vec<_> = tokens.into_iter().map(|t| t.token_kind).collect();
 
         let expected_types = vec![
-            TT::BANG_EQUAL,
-            TT::EQUAL_EQUAL,
-            TT::LESS_EQUAL,
-            TT::GREATER_EQUAL,
-            TT::BANG,
-            TT::EQUAL,
-            TT::LESS,
-            TT::GREATER,
+            TT::Keyword(KT::BangEqual),
+            TT::Keyword(KT::EqualEqual),
+            TT::Keyword(KT::LessEqual),
+            TT::Keyword(KT::GreaterEqual),
+            TT::Keyword(KT::Bang),
+            TT::Keyword(KT::Equal),
+            TT::Keyword(KT::Less),
+            TT::Keyword(KT::Greater),
         ];
 
         assert_eq!(types, expected_types);
@@ -354,35 +290,15 @@ mod tokenizer_tests {
     #[test]
     fn slash_is_division_when_not_doubled() {
         let tokens = Scanner::new("a / b").scan_tokens().unwrap();
-        let types: Vec<_> = tokens.into_iter().map(|t| t.kind).collect();
+        let types: Vec<_> = tokens.into_iter().map(|t| t.token_kind).collect();
 
-        let expected_types = vec![TT::IDENTIFIER, TT::SLASH, TT::IDENTIFIER];
-
-        assert_eq!(types, expected_types);
-    }
-
-    #[test]
-    fn comment_consumes_to_newline() {
-        let tokens =
-            Scanner::new("// this is ignored\n+").scan_tokens().unwrap();
-        let types: Vec<_> = tokens.into_iter().map(|t| t.kind).collect();
-
-        let expected_types = vec![TT::COMMENT, TT::PLUS];
+        let expected_types = vec![
+            TT::Literal(LT::Identifier),
+            TT::Keyword(KT::Slash),
+            TT::Literal(LT::Identifier),
+        ];
 
         assert_eq!(types, expected_types);
-    }
-
-    #[test]
-    fn whitespace_is_skipped_but_tracks_lines() {
-        let tokens = Scanner::new("  \t\r\n+\n\n-").scan_tokens().unwrap();
-        let types: Vec<_> = tokens.iter().map(|t| t.kind).collect();
-        let lines: Vec<_> = tokens.iter().map(|t| t.line).collect();
-
-        let expected_types = vec![TT::PLUS, TT::MINUS];
-        let expected_lines = vec![2, 4];
-
-        assert_eq!(types, expected_types);
-        assert_eq!(lines, expected_lines);
     }
 
     #[test]
@@ -390,12 +306,10 @@ mod tokenizer_tests {
         let tokens = Scanner::new(r#""hello""#).scan_tokens().unwrap();
         let token = &tokens[0];
 
-        let expected_token_type = TT::STRING;
-        let expected_literal = TokenValue::String("hello");
+        let expected_token_type = TT::Literal(LT::String);
 
         assert_eq!(tokens.len(), 1);
-        assert_eq!(token.kind, expected_token_type);
-        assert_eq!(token.token_value, Some(expected_literal));
+        assert_eq!(token.token_kind, expected_token_type);
     }
 
     #[test]
@@ -403,23 +317,10 @@ mod tokenizer_tests {
         let tokens = Scanner::new(r#""""#).scan_tokens().unwrap();
         let token = &tokens[0];
 
-        let expected_token_type = TT::STRING;
-        let expected_literal = TokenValue::String("");
+        let expected_token_type = TT::Literal(LT::String);
 
         assert_eq!(tokens.len(), 1);
-        assert_eq!(token.kind, expected_token_type);
-        assert_eq!(token.token_value, Some(expected_literal));
-    }
-
-    #[test]
-    fn multiline_string_tracks_lines() {
-        let tokens = Scanner::new("\"line1\nline2\"\n+").scan_tokens().unwrap();
-
-        assert_eq!(tokens.len(), 2);
-        assert_eq!(tokens[0].kind, TT::STRING);
-        assert_eq!(tokens[0].line, 1);
-        assert_eq!(tokens[1].kind, TT::PLUS);
-        assert_eq!(tokens[1].line, 3);
+        assert_eq!(token.token_kind, expected_token_type);
     }
 
     #[test]
@@ -463,29 +364,25 @@ mod tokenizer_tests {
         let mut tokens = Scanner::new("123").scan_tokens().unwrap();
         let mut token = tokens[0];
 
-        let expected_token_type = TT::NUMBER;
-        let mut expected_token_literal = TokenValue::Number(123.0);
+        let expected_token_type = TT::Literal(LT::Number);
 
         assert_eq!(tokens.len(), 1);
-        assert_eq!(token.kind, expected_token_type);
-        assert_eq!(token.token_value, Some(expected_token_literal));
+        assert_eq!(token.token_kind, expected_token_type);
 
         tokens = Scanner::new("3.15").scan_tokens().unwrap();
         token = tokens[0];
 
-        expected_token_literal = TokenValue::Number(3.15);
-
         assert_eq!(tokens.len(), 1);
-        assert_eq!(token.kind, expected_token_type);
-        assert_eq!(token.token_value, Some(expected_token_literal));
+        assert_eq!(token.token_kind, expected_token_type);
     }
 
     #[test]
     fn trailing_dot_is_separate_token() {
         let tokens = Scanner::new("123.").scan_tokens().unwrap();
-        let types: Vec<_> = tokens.into_iter().map(|t| t.kind).collect();
+        let types: Vec<_> = tokens.into_iter().map(|t| t.token_kind).collect();
 
-        let expected_types = vec![TT::NUMBER, TT::DOT];
+        let expected_types =
+            vec![TT::Literal(LT::Number), TT::Keyword(KT::Dot)];
 
         assert_eq!(types, expected_types);
     }
@@ -493,9 +390,10 @@ mod tokenizer_tests {
     #[test]
     fn leading_dot_is_separate_token() {
         let tokens = Scanner::new(".123").scan_tokens().unwrap();
-        let types: Vec<_> = tokens.into_iter().map(|t| t.kind).collect();
+        let types: Vec<_> = tokens.into_iter().map(|t| t.token_kind).collect();
 
-        let expected_types = vec![TT::DOT, TT::NUMBER];
+        let expected_types =
+            vec![TT::Keyword(KT::Dot), TT::Literal(LT::Number)];
 
         assert_eq!(types, expected_types);
     }
@@ -503,9 +401,13 @@ mod tokenizer_tests {
     #[test]
     fn identifier_vs_keyword() {
         let tokens = Scanner::new("var foo if").scan_tokens().unwrap();
-        let types: Vec<_> = tokens.into_iter().map(|t| t.kind).collect();
+        let types: Vec<_> = tokens.into_iter().map(|t| t.token_kind).collect();
 
-        let expected_types = vec![TT::VAR, TT::IDENTIFIER, TT::IF];
+        let expected_types = vec![
+            TT::Keyword(KT::Var),
+            TT::Literal(LT::Identifier),
+            TT::Keyword(KT::If),
+        ];
 
         assert_eq!(types, expected_types);
     }
@@ -513,26 +415,27 @@ mod tokenizer_tests {
     #[test]
     fn identifier_with_underscore_and_digits() {
         let tokens = Scanner::new("_foo bar123 _").scan_tokens().unwrap();
-        let types: Vec<_> = tokens.iter().map(|t| t.kind).collect();
+        let types: Vec<_> = tokens.iter().map(|t| t.token_kind).collect();
 
-        let expected_types =
-            vec![TT::IDENTIFIER, TT::IDENTIFIER, TT::IDENTIFIER];
+        let expected_types = vec![
+            TT::Literal(LT::Identifier),
+            TT::Literal(LT::Identifier),
+            TT::Literal(LT::Identifier),
+        ];
 
         assert_eq!(tokens.len(), 3);
 
         assert_eq!(types, expected_types);
-        assert_eq!(tokens[0].token_value, Some(TV::Identifier("_foo")));
-        assert_eq!(tokens[1].token_value, Some(TV::Identifier("bar123")));
-        assert_eq!(tokens[2].token_value, Some(TV::Identifier("_")));
     }
 
     #[test]
     fn identifier_cannot_start_with_digit() {
         let result = Scanner::new("123abc").scan_tokens();
         let types: Vec<_> =
-            result.unwrap().into_iter().map(|t| t.kind).collect();
+            result.unwrap().into_iter().map(|t| t.token_kind).collect();
 
-        let expected_types = vec![TT::NUMBER, TT::IDENTIFIER];
+        let expected_types =
+            vec![TT::Literal(LT::Number), TT::Literal(LT::Identifier)];
         assert_eq!(types, expected_types);
     }
 
@@ -540,9 +443,11 @@ mod tokenizer_tests {
     fn comment_skips_until_eol() {
         let result = Scanner::new("123//some words if\n+").scan_tokens();
         let types: Vec<_> =
-            result.unwrap().into_iter().map(|t| t.kind).collect();
+            result.unwrap().into_iter().map(|t| t.token_kind).collect();
 
-        let expected_types = vec![TT::NUMBER, TT::COMMENT, TT::PLUS];
+        let expected_types =
+            vec![TT::Literal(LT::Number), TT::Keyword(KT::Plus)];
+
         assert_eq!(types, expected_types);
     }
 
@@ -600,26 +505,23 @@ mod cursor_tests {
     fn consume() {
         let mut tokenizer = Cursor::new("test");
 
-        assert_eq!(tokenizer.consume_chars(3), "tes");
-        assert!(
-            tokenizer.location.index == "tes".chars().map(char::len_utf8).sum()
-        );
+        assert_eq!(tokenizer.consume_chars(3), (0, 3));
 
         assert_eq!(tokenizer.first(), Some('t'));
         assert_eq!(tokenizer.second(), None);
 
-        assert_eq!(tokenizer.consume_chars(5), "t");
+        assert_eq!(tokenizer.consume_chars(5), (3, 4));
     }
 
     #[test]
     fn consume_chars() {
         let mut tokenizer = Cursor::new("test");
-        assert_eq!(tokenizer.consume_chars(3), "tes");
+        assert_eq!(tokenizer.consume_chars(3), (0, 3));
         assert_eq!(tokenizer.first(), Some('t'));
 
         tokenizer = Cursor::new("testy");
-        let _: &str = tokenizer.consume_chars(2);
-        let _: &str = tokenizer.consume_chars(2);
+        let _: Span = tokenizer.consume_chars(2);
+        let _: Span = tokenizer.consume_chars(2);
         assert_eq!(tokenizer.first(), Some('y'));
         assert_eq!(tokenizer.second(), None);
     }
@@ -630,30 +532,16 @@ mod cursor_tests {
         assert_eq!(tokenizer.first(), None);
         assert_eq!(tokenizer.second(), None);
         assert_eq!(tokenizer.pop(), None);
-        assert_eq!(tokenizer.consume_chars(5), "");
-        assert_eq!(tokenizer.line(), 1);
+        assert_eq!(tokenizer.consume_chars(5), (0, 0));
+        assert_eq!(tokenizer.index, 0);
     }
 
     #[test]
     fn consume_zero_chars_is_noop() {
         let mut tokenizer = Cursor::new("abc");
-        assert_eq!(tokenizer.consume_chars(0), "");
+        assert_eq!(tokenizer.consume_chars(0), (0, 0));
         assert_eq!(tokenizer.first(), Some('a'));
-        assert_eq!(tokenizer.location.index, 0);
-    }
-
-    #[test]
-    fn line_starts_at_one_and_increments_on_newline() {
-        let mut tokenizer = Cursor::new("a\nb\n\nc");
-        assert_eq!(tokenizer.line(), 1);
-        assert_eq!(tokenizer.pop(), Some('a'));
-        assert_eq!(tokenizer.line(), 1);
-        assert_eq!(tokenizer.pop(), Some('\n'));
-        assert_eq!(tokenizer.line(), 2);
-        assert_eq!(tokenizer.pop(), Some('b'));
-        assert_eq!(tokenizer.pop(), Some('\n'));
-        assert_eq!(tokenizer.pop(), Some('\n'));
-        assert_eq!(tokenizer.line(), 4);
+        assert_eq!(tokenizer.index, 0);
     }
 
     #[test]
@@ -661,7 +549,7 @@ mod cursor_tests {
         let mut tokenizer = Cursor::new("12345abc");
         tokenizer.advance_while(|c| c.is_ascii_digit());
         assert_eq!(tokenizer.first(), Some('a'));
-        assert_eq!(tokenizer.location.index, 5);
+        assert_eq!(tokenizer.index, 5);
     }
 
     #[test]
@@ -676,15 +564,7 @@ mod cursor_tests {
         let mut tokenizer = Cursor::new("abc");
         tokenizer.advance_while(|c| c.is_ascii_digit());
         assert_eq!(tokenizer.first(), Some('a'));
-        assert_eq!(tokenizer.location.index, 0);
-    }
-
-    #[test]
-    fn slice_from_returns_span_between_locations() {
-        let mut tokenizer = Cursor::new("foobar");
-        let start = tokenizer.location;
-        tokenizer.consume_chars(3);
-        assert_eq!(tokenizer.slice_from(start), "foo");
+        assert_eq!(tokenizer.index, 0);
     }
 
     #[test]
@@ -702,9 +582,9 @@ mod cursor_tests {
         let mut tokenizer = Cursor::new("é🦀z");
         assert_eq!(tokenizer.first(), Some('é'));
         assert_eq!(tokenizer.pop(), Some('é'));
-        assert_eq!(tokenizer.location.index, 2);
+        assert_eq!(tokenizer.index, 2);
         assert_eq!(tokenizer.pop(), Some('🦀'));
-        assert_eq!(tokenizer.location.index, 6);
+        assert_eq!(tokenizer.index, 6);
         assert_eq!(tokenizer.pop(), Some('z'));
         assert_eq!(tokenizer.pop(), None);
     }
@@ -712,15 +592,7 @@ mod cursor_tests {
     #[test]
     fn consume_chars_with_multibyte() {
         let mut tokenizer = Cursor::new("é🦀z");
-        assert_eq!(tokenizer.consume_chars(2), "é🦀");
+        assert_eq!(tokenizer.consume_chars(2), (0, 6));
         assert_eq!(tokenizer.first(), Some('z'));
-    }
-
-    #[test]
-    fn advance_while_counts_newlines() {
-        let mut tokenizer = Cursor::new("\n\n\nx");
-        tokenizer.advance_while(|c| c == '\n');
-        assert_eq!(tokenizer.line(), 4);
-        assert_eq!(tokenizer.first(), Some('x'));
     }
 }

@@ -1,13 +1,17 @@
-use crate::evaluator::environment::Frame;
+use crate::evaluator::environment::{Frame, VariableBinding};
 use crate::operator_subset;
-use crate::token_type::OperatorSubset;
+use crate::token::{Span, Token};
+use crate::token_type::KeywordToken as KT;
+use crate::token_type::LiteralToken as LT;
+use crate::token_type::TokenType as TT;
+use crate::token_type::TokenTypeSubset;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 
 #[derive(Clone, Debug)]
 pub enum Statement<'a> {
     Declaration {
-        name: &'a str,
+        binding: VariableBinding<'a>,
         expression: Option<Expr<'a>>,
     },
     FunctionDeclaration(Function<'a>),
@@ -24,7 +28,7 @@ pub enum Statement<'a> {
         body: Box<Self>,
     },
     Return {
-        line: usize,
+        span: Span,
         value: Option<Expr<'a>>,
     },
     Break,
@@ -37,7 +41,7 @@ impl<'a> Statement<'a> {
         condition: Option<Expr<'a>>,
         increment: Option<Expr<'a>>,
         body: Box<Self>,
-        line: usize,
+        span: Span,
     ) -> Self {
         let body = match increment {
             Some(inc) => {
@@ -46,7 +50,7 @@ impl<'a> Statement<'a> {
             None => body,
         };
         let flattened_condition = condition
-            .unwrap_or_else(|| Expr::literal(Value::Boolean(true), line));
+            .unwrap_or_else(|| Expr::literal(Value::Boolean(true), span));
 
         let while_loop = Self::While {
             condition: flattened_condition,
@@ -62,7 +66,7 @@ impl<'a> Statement<'a> {
 
 #[derive(Clone, Debug)]
 pub struct Expr<'a> {
-    pub line: usize,
+    pub span: Span,
     pub kind: ExprKind<'a>,
 }
 
@@ -89,6 +93,12 @@ pub enum Value<'a> {
     Number(f64),
     Boolean(bool),
     Nil,
+}
+
+#[derive(Clone, Debug)]
+pub enum ValueError {
+    NotANumber(Span),
+    NotAValue(Span),
 }
 
 #[derive(Clone, Debug)]
@@ -125,9 +135,9 @@ pub struct Call<'a> {
 
 #[derive(Clone, Debug)]
 pub struct Function<'a> {
-    pub name: &'a str,
+    pub binding: VariableBinding<'a>,
     pub body: FunctionKind<'a>,
-    pub params: Vec<&'a str>,
+    pub params: Vec<VariableBinding<'a>>,
 }
 
 #[derive(Clone, Debug)]
@@ -136,23 +146,23 @@ pub enum FunctionKind<'a> {
     Rust(fn(Vec<Value<'a>>) -> Value<'a>),
 }
 
-operator_subset!(UnaryOperator, {MINUS, BANG});
+operator_subset!(UnaryOperator, {Minus, Bang});
 operator_subset!(BinaryOperator, {
-    MINUS,
-    PLUS,
-    GREATER,
-    GREATER_EQUAL,
-    BANG_EQUAL,
-    EQUAL_EQUAL,
-    SLASH,
-    STAR,
-    COMMA,
-    QUESTION_MARK,
-    COLON,
-    LESS,
-    LESS_EQUAL,
+    Minus,
+    Plus,
+    Greater,
+    GreaterEqual,
+    BangEqual,
+    EqualEqual,
+    Slash,
+    Star,
+    Comma,
+    QuestionMark,
+    Colon,
+    Less,
+    LessEqual,
 });
-operator_subset!(LogicalOperator, {OR, AND});
+operator_subset!(LogicalOperator, {Or, And});
 
 impl<'a> Expr<'a> {
     #[must_use]
@@ -160,10 +170,10 @@ impl<'a> Expr<'a> {
         left: Box<Self>,
         operator: LogicalOperator,
         right: Box<Self>,
-        line: usize,
+        span: Span,
     ) -> Self {
         Expr {
-            line,
+            span,
             kind: ExprKind::Logical(Logical {
                 left,
                 operator,
@@ -177,10 +187,10 @@ impl<'a> Expr<'a> {
         left: Box<Self>,
         operator: BinaryOperator,
         right: Box<Self>,
-        line: usize,
+        span: Span,
     ) -> Self {
         Expr {
-            line,
+            span,
             kind: ExprKind::Binary(Binary {
                 left,
                 operator,
@@ -193,34 +203,34 @@ impl<'a> Expr<'a> {
     pub const fn unary(
         operator: UnaryOperator,
         expr: Box<Self>,
-        line: usize,
+        span: Span,
     ) -> Self {
         Expr {
-            line,
+            span,
             kind: ExprKind::Unary(Unary { operator, expr }),
         }
     }
 
     #[must_use]
-    pub const fn literal(value: Value<'a>, line: usize) -> Self {
+    pub const fn literal(value: Value<'a>, span: Span) -> Self {
         Expr {
-            line,
+            span,
             kind: ExprKind::Literal(value),
         }
     }
 
     #[must_use]
-    pub const fn identifier(identifier: &'a str, line: usize) -> Self {
+    pub const fn identifier(identifier: &'a str, span: Span) -> Self {
         Expr {
-            line,
+            span,
             kind: ExprKind::Identifier(identifier),
         }
     }
 
     #[must_use]
-    pub const fn grouping(grouping: Box<Self>, line: usize) -> Self {
+    pub const fn grouping(grouping: Box<Self>, span: Span) -> Self {
         Expr {
-            line,
+            span,
             kind: ExprKind::Grouping(grouping),
         }
     }
@@ -229,10 +239,10 @@ impl<'a> Expr<'a> {
     pub const fn assignment(
         name: &'a str,
         expr: Box<Self>,
-        line: usize,
+        span: Span,
     ) -> Self {
         Expr {
-            line,
+            span,
             kind: ExprKind::Assignment(Assignment { name, expr }),
         }
     }
@@ -240,15 +250,15 @@ impl<'a> Expr<'a> {
     #[must_use]
     pub const fn call(callee: Box<Self>, arguments: Vec<Self>) -> Self {
         Expr {
-            line: callee.line,
+            span: callee.span,
             kind: ExprKind::Call(Call { callee, arguments }),
         }
     }
 
     #[must_use]
-    pub const fn lambda(function: Function<'a>, line: usize) -> Self {
+    pub const fn lambda(function: Function<'a>) -> Self {
         Expr {
-            line,
+            span: function.binding.span,
             kind: ExprKind::Lambda(function),
         }
     }
@@ -257,9 +267,12 @@ impl<'a> Expr<'a> {
 impl Display for Value<'_> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            Self::String(..) => write!(f, "\"{}\"", self.cast_to_string()),
             Self::Function {
-                declaration: Function { name, .. },
+                declaration:
+                    Function {
+                        binding: VariableBinding { name, .. },
+                        ..
+                    },
                 ..
             } => write!(f, "<fn {name}>"),
             _ => write!(f, "{}", self.cast_to_string()),
@@ -267,7 +280,18 @@ impl Display for Value<'_> {
     }
 }
 
-impl Value<'_> {
+impl<'a> Value<'a> {
+    #[must_use]
+    pub const fn token_types() -> &'static [TT] {
+        &[
+            TT::Literal(LT::String),
+            TT::Keyword(KT::True),
+            TT::Keyword(KT::False),
+            TT::Literal(LT::Number),
+            TT::Keyword(KT::Nil),
+        ]
+    }
+
     #[must_use]
     pub const fn type_name(&self) -> &'static str {
         match self {
@@ -287,6 +311,28 @@ impl Value<'_> {
             Self::Boolean(value) => format!("{value}"),
             Self::Nil => "nil".to_owned(),
             Self::Function { .. } => "Function".to_owned(),
+        }
+    }
+
+    /// # Errors
+    ///
+    /// Will error if the number is invalid
+    pub fn try_from(
+        token: &Token,
+        source: &'a str,
+    ) -> Result<Self, ValueError> {
+        let sub_string = &source[token.span.0..token.span.1];
+        match token.token_kind {
+            TT::Literal(LT::String) => Ok(Self::String(sub_string.to_owned())),
+            TT::Keyword(KT::True) => Ok(Self::Boolean(true)),
+            TT::Keyword(KT::False) => Ok(Self::Boolean(false)),
+            TT::Literal(LT::Number) => sub_string
+                .parse::<f64>()
+                .map_or(Err(ValueError::NotANumber(token.span)), |v| {
+                    Ok(Self::Number(v))
+                }),
+            TT::Keyword(KT::Nil) => Ok(Self::Nil),
+            _ => Err(ValueError::NotAValue(token.span)),
         }
     }
 }

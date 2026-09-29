@@ -1,19 +1,17 @@
-use crate::error_utils::StageError;
+use crate::{error_utils::StageError, token::Span};
 use std::borrow::ToOwned;
 
 #[derive(Debug)]
-pub struct ScannerError<'a> {
-    pub line: usize,
+pub struct ScannerError {
     pub message: &'static str,
-    pub error_location: Option<&'a str>,
+    pub error_location: Span,
 }
 
-impl<'a> From<ScannerError<'a>> for StageError {
-    fn from(val: ScannerError<'a>) -> Self {
+impl From<ScannerError> for StageError {
+    fn from(val: ScannerError) -> Self {
         Self {
-            line: Some(val.line),
+            span: Some(val.error_location),
             message: val.message.to_owned(),
-            error_location: val.error_location.map(ToOwned::to_owned),
             stage: "scanning",
             children: Vec::new(),
         }

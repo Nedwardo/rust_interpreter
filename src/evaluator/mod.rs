@@ -18,13 +18,14 @@ use crate::expressions::{
     Binary, BinaryOperator, Call, Expr, ExprKind, Function, FunctionKind,
     Logical, LogicalOperator, Statement, Unary, UnaryOperator, Value,
 };
+use crate::token::Span;
 
 pub fn evaluate<'a, W: Write + Debug>(
     statements: &Vec<Statement<'a>>,
     locals: LookupMap<'a>,
     writer: &mut W,
 ) -> Result<Option<Value<'a>>, Vec<EvaluationError<'a>>> {
-    trace!("Begining eval {statements:?}");
+    trace!("Begining eval: {statements:?}\nlocals: {locals:?}");
     evaluate_statements(statements, &mut Environment::new(locals), writer)
 }
 
@@ -52,6 +53,7 @@ fn evaluate_statements<'a, W: Write + Debug>(
     Ok(result)
 }
 
+#[allow(clippy::result_large_err, reason = "Return is handled by error path")]
 fn eval<'a, W: Write + Debug>(
     statement: &Statement<'a>,
     env: &mut Environment<'a>,
@@ -68,18 +70,21 @@ fn eval<'a, W: Write + Debug>(
             let output = visit(expr, env, writer)?;
             writeln!(writer, "{output}").expect("Write to sink failed");
         }
-        Statement::Declaration { name, expression } => {
+        Statement::Declaration {
+            binding,
+            expression,
+        } => {
             trace!("Declaration");
             if let Some(expr) = expression {
                 let value = Some(visit(expr, env, writer)?);
-                env.define(name, value);
+                env.define(binding, value);
             } else {
-                env.define(name, None);
+                env.define(binding, None);
             }
         }
         Statement::FunctionDeclaration(declaration) => {
             env.define(
-                declaration.name,
+                &declaration.binding,
                 Some(define_function(declaration, env)),
             );
         }
@@ -116,7 +121,7 @@ fn eval<'a, W: Write + Debug>(
         }
         Statement::Break => return Err(Break),
         Statement::Return {
-            line,
+            span,
             value: value_expr,
         } => {
             let return_value = match value_expr {
@@ -125,7 +130,7 @@ fn eval<'a, W: Write + Debug>(
             };
 
             return Err(Return {
-                line: *line,
+                span: *span,
                 value: return_value,
             });
         }
@@ -143,6 +148,7 @@ fn define_function<'a>(
     }
 }
 
+#[allow(clippy::result_large_err, reason = "Return is handled by error path")]
 fn visit<'a, W: Write + Debug>(
     expr: &Expr<'a>,
     env: &mut Environment<'a>,
@@ -150,72 +156,81 @@ fn visit<'a, W: Write + Debug>(
 ) -> Result<Value<'a>, EvaluationError<'a>> {
     match &expr.kind {
         ExprKind::Literal(value) => Ok(value.clone()),
-        ExprKind::Unary(unary) => visit_unary(unary, expr.line, env, writer),
+        ExprKind::Unary(unary) => visit_unary(unary, expr.span, env, writer),
         ExprKind::Binary(binary) => {
-            visit_binary(binary, expr.line, env, writer)
+            visit_binary(binary, expr.span, env, writer)
         }
         ExprKind::Grouping(expr) => visit(expr, env, writer),
         ExprKind::Identifier(name) => {
             let binding = VariableBinding {
                 name,
-                line: expr.line,
+                span: expr.span,
             };
 
-            env.get(&binding).map_err(|err| match err {
-                GetError::Undefined => UndefinedVariable {
-                    name,
-                    line: expr.line,
-                },
-                GetError::Uninitalised => UnitialisedVariable {
-                    name,
-                    line: expr.line,
-                },
-            })
+            env.get(&binding)
+                .map_err(|err| match err {
+                    GetError::Undefined => UndefinedVariable {
+                        name,
+                        span: expr.span,
+                    },
+                    GetError::Uninitalised => UnitialisedVariable {
+                        name,
+                        span: expr.span,
+                    },
+                })
+                .cloned()
         }
         ExprKind::Assignment(assignment) => {
+            let binding = VariableBinding {
+                name: assignment.name,
+                span: expr.span,
+            };
             let value = visit(&assignment.expr, env, writer)?;
-            env.update(assignment.name, value.clone()).map_err(|()| {
+
+            env.update(&binding, value.clone()).map_err(|()| {
                 UndefinedVariable {
                     name: assignment.name,
-                    line: expr.line,
+                    span: expr.span,
                 }
             })?;
             Ok(value)
         }
         ExprKind::Logical(logical) => visit_logical(logical, env, writer),
-        ExprKind::Call(call) => visit_call(call, expr.line, env, writer),
+        ExprKind::Call(call) => visit_call(call, expr.span, env, writer),
         ExprKind::Lambda(function) => Ok(define_function(function, env)),
     }
 }
 
+#[allow(clippy::result_large_err, reason = "Return is handled by error path")]
 fn visit_unary<'a, W: Write + Debug>(
     unary: &Unary<'a>,
-    line: usize,
+    span: Span,
     env: &mut Environment<'a>,
     writer: &mut W,
 ) -> Result<Value<'a>, EvaluationError<'a>> {
     let value = visit(&unary.expr, env, writer)?;
 
     match unary.operator {
-        UnaryOperator::MINUS => match value {
+        UnaryOperator::Minus => match value {
             Value::Number(num) => Ok(Value::Number(-num)),
             _ => Err(UnsupportedUnaryOperand {
                 expr_type: value.type_name(),
                 operator: unary.operator,
-                line,
+                span,
             }),
         },
-        UnaryOperator::BANG => Ok(Value::Boolean(!as_bool(&value))),
+        UnaryOperator::Bang => Ok(Value::Boolean(!as_bool(&value))),
     }
 }
 
+#[allow(clippy::result_large_err, reason = "Return is handled by error path")]
 #[allow(
     clippy::string_add,
     reason = "Do not want to modify the original string inplace"
 )]
 fn visit_binary<'a, W: Write + Debug>(
     binary: &Binary<'a>,
-    line: usize,
+    span: Span,
     env: &mut Environment<'a>,
     writer: &mut W,
 ) -> Result<Value<'a>, EvaluationError<'a>> {
@@ -223,13 +238,13 @@ fn visit_binary<'a, W: Write + Debug>(
     let right_value = visit(&binary.right, env, writer)?;
 
     match binary.operator {
-        BinaryOperator::EQUAL_EQUAL => {
+        BinaryOperator::EqualEqual => {
             return Ok(Value::Boolean(is_equal(&left_value, &right_value)));
         }
-        BinaryOperator::BANG_EQUAL => {
+        BinaryOperator::BangEqual => {
             return Ok(Value::Boolean(!is_equal(&left_value, &right_value)));
         }
-        BinaryOperator::PLUS => {
+        BinaryOperator::Plus => {
             if let Value::String(lhs_string) = left_value {
                 return Ok(Value::String(
                     lhs_string + &right_value.cast_to_string(),
@@ -256,10 +271,11 @@ fn visit_binary<'a, W: Write + Debug>(
         lhs_type: left_type,
         operator: binary.operator,
         rhs_type: right_value.type_name(),
-        line,
+        span,
     })
 }
 
+#[allow(clippy::result_large_err, reason = "Return is handled by error path")]
 fn visit_logical<'a, W: Write + Debug>(
     logical: &Logical<'a>,
     env: &mut Environment<'a>,
@@ -269,19 +285,20 @@ fn visit_logical<'a, W: Write + Debug>(
     let lhs_truthy = as_bool(&lhs_value);
 
     match logical.operator {
-        LogicalOperator::OR if !lhs_truthy => {
+        LogicalOperator::Or if !lhs_truthy => {
             visit(&logical.right, env, writer)
         }
-        LogicalOperator::AND if lhs_truthy => {
+        LogicalOperator::And if lhs_truthy => {
             visit(&logical.right, env, writer)
         }
         _ => Ok(lhs_value),
     }
 }
 
+#[allow(clippy::result_large_err, reason = "Return is handled by error path")]
 fn visit_call<'a, W: Write + Debug>(
     call: &Call<'a>,
-    line: usize,
+    span: Span,
     env: &mut Environment<'a>,
     writer: &mut W,
 ) -> Result<Value<'a>, EvaluationError<'a>> {
@@ -293,16 +310,16 @@ fn visit_call<'a, W: Write + Debug>(
             Function {
                 body,
                 params,
-                name: _,
+                binding: _,
             },
         closure,
     } = function
     else {
-        return Err(EvaluationError::NonFunctionCalled { line });
+        return Err(EvaluationError::NonFunctionCalled { span });
     };
     if call.arguments.len() != params.len() {
         return Err(EvaluationError::IncorrectArgumentCount {
-            line,
+            span,
             expected_arguments: params.len(),
             recieved_arguments_count: call.arguments.len(),
         });
@@ -321,7 +338,7 @@ fn visit_call<'a, W: Write + Debug>(
             env.narrow();
 
             for index in 0..params.len() {
-                env.define(params[index], Some(arguments[index].clone()));
+                env.define(&params[index], Some(arguments[index].clone()));
             }
             trace!("Calling with {arguments:?}");
             let result = eval(&statement, env, writer);
@@ -330,7 +347,7 @@ fn visit_call<'a, W: Write + Debug>(
 
             match result {
                 Ok(_) => Ok(Value::Nil),
-                Err(Return { line: _, value }) => {
+                Err(Return { span: _, value }) => {
                     trace!("Returning value: {value}");
                     Ok(value)
                 }
@@ -347,17 +364,17 @@ fn numeric_binary_operations<'a>(
     rhs: f64,
 ) -> Option<Value<'a>> {
     let result = match operator {
-        BinaryOperator::MINUS => Value::Number(lhs - rhs),
-        BinaryOperator::SLASH => Value::Number(lhs / rhs),
-        BinaryOperator::STAR => Value::Number(lhs * rhs),
-        BinaryOperator::PLUS => {
+        BinaryOperator::Minus => Value::Number(lhs - rhs),
+        BinaryOperator::Slash => Value::Number(lhs / rhs),
+        BinaryOperator::Star => Value::Number(lhs * rhs),
+        BinaryOperator::Plus => {
             trace!("Summation of {lhs} and {rhs}");
             Value::Number(lhs + rhs)
         }
-        BinaryOperator::GREATER => Value::Boolean(lhs > rhs),
-        BinaryOperator::GREATER_EQUAL => Value::Boolean(lhs >= rhs),
-        BinaryOperator::LESS => Value::Boolean(lhs < rhs),
-        BinaryOperator::LESS_EQUAL => Value::Boolean(lhs <= rhs),
+        BinaryOperator::Greater => Value::Boolean(lhs > rhs),
+        BinaryOperator::GreaterEqual => Value::Boolean(lhs >= rhs),
+        BinaryOperator::Less => Value::Boolean(lhs < rhs),
+        BinaryOperator::LessEqual => Value::Boolean(lhs <= rhs),
         _ => {
             return None;
         }

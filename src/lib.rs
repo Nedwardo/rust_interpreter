@@ -48,11 +48,12 @@ pub fn run<'a, W: fmt::Write + Debug>(
 ) -> Result<Option<Value<'a>>, Box<dyn Error>> {
     let tokens = scan(script)
         .map_err(|err| HydratedStageError::hydrate_errors(err, script))?;
-    let statements = parse(tokens)
+    let statements = parse(script, tokens)
         .map_err(|err| HydratedStageError::hydrate_error(&err, script))?;
     trace!("Statments: {statements:#?}");
     let locals = resolve(&statements)
         .map_err(|err| HydratedStageError::hydrate_error(&err, script))?;
+    trace!("Locals: {locals:#?}");
     Ok(evaluate(&statements, locals, writer).map_err(|err| {
         Box::new(HydratedStageError::hydrate_errors(err, script))
     })?)

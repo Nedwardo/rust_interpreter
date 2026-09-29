@@ -4,8 +4,10 @@
     clippy::unwrap_used,
     reason = "tests"
 )]
+#[allow(clippy::use_debug, reason = "tests")]
 #[cfg(test)]
 mod integration_tests {
+
     use interpreter::expressions::Value;
     use interpreter::run;
 
@@ -63,7 +65,7 @@ mod integration_tests {
         let mut output = String::new();
 
         let result = run(lox_script, &mut output);
-        println!("Printing output !!!!: {:?}", output);
+        println!("Printing output !!!!: {output:?}");
 
         assert_eq!(output, "1\n2\n");
         assert!(matches!(result.unwrap().unwrap(), Value::Nil));
@@ -135,6 +137,25 @@ mod integration_tests {
         let result = run(lox_script, &mut output);
 
         assert_eq!(output, "2\n");
+        assert!(result.unwrap().is_none());
+    }
+    #[test]
+    fn resolving_and_binding() {
+        let lox_script = "var a = \"global\"; \
+            { \
+                fun showA() { \
+                    print a; \
+                } \
+                \
+                showA(); \
+                var a = \"block\"; \
+                showA(); \
+            }";
+        let mut output = String::new();
+
+        let result = run(lox_script, &mut output);
+
+        assert_eq!(output, "global\nglobal\n");
         assert!(result.unwrap().is_none());
     }
 }

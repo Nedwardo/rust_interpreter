@@ -1,4 +1,4 @@
-use crate::evaluator::environment::Frame;
+use crate::evaluator::environment::{Frame, VariableBinding};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
@@ -13,7 +13,10 @@ pub fn define_globals(environment: &mut Environment<'_>) {
             declaration: Function {
                 body: FunctionKind::Rust(clock),
                 params: vec![],
-                name: "clock",
+                binding: VariableBinding {
+                    name: "clock",
+                    span: (0, 0),
+                },
             },
             closure: Frame::new(),
         },

@@ -1,142 +1,172 @@
-use crate::operator_subset;
 use core::fmt::{Debug, Display, Formatter};
 
-#[allow(
-    non_camel_case_types,
-    clippy::upper_case_acronyms,
-    reason = "Using the same names as from the book"
-)]
 #[derive(PartialEq, Eq, Copy, Clone)]
 pub enum TokenType {
-    // Single-character tokens.
-    LEFT_PAREN,
-    RIGHT_PAREN,
-    LEFT_BRACE,
-    RIGHT_BRACE,
-    COMMA,
-    DOT,
-    MINUS,
-    PLUS,
-    SEMICOLON,
-    SLASH,
-    STAR,
-    QUESTION_MARK,
-    COLON,
-
-    // One or two character tokens.
-    BANG,
-    BANG_EQUAL,
-    EQUAL,
-    EQUAL_EQUAL,
-    GREATER,
-    GREATER_EQUAL,
-    LESS,
-    LESS_EQUAL,
-
-    // Literals.
-    IDENTIFIER,
-    STRING,
-    NUMBER,
-
-    // Keywords.
-    AND,
-    CLASS,
-    ELSE,
-    FALSE,
-    FUN,
-    FOR,
-    IF,
-    NIL,
-    OR,
-    PRINT,
-    RETURN,
-    SUPER,
-    THIS,
-    TRUE,
-    VAR,
-    WHILE,
-    BREAK,
-
-    COMMENT,
+    Literal(LiteralToken),
+    Keyword(KeywordToken),
 }
 
-operator_subset!(ValueTokenTypes, {STRING, NUMBER, TRUE, FALSE, NIL, IDENTIFIER, COMMENT});
+#[derive(PartialEq, Eq, Copy, Clone)]
+pub enum LiteralToken {
+    String,
+    Number,
+    Identifier,
+}
 
-#[allow(clippy::enum_glob_use, reason = "Too many enum groups")]
-use super::token_type::TokenType::*;
+#[derive(PartialEq, Eq, Copy, Clone)]
+pub enum KeywordToken {
+    LeftParen,
+    RightParen,
+    LeftBrace,
+    RightBrace,
+    Comma,
+    Dot,
+    Minus,
+    Plus,
+    Semicolon,
+    Slash,
+    Star,
+    QuestionMark,
+    Colon,
+    Bang,
+    BangEqual,
+    Equal,
+    EqualEqual,
+    Greater,
+    GreaterEqual,
+    Less,
+    LessEqual,
+    And,
+    Class,
+    Else,
+    False,
+    Fun,
+    For,
+    If,
+    Nil,
+    Or,
+    Print,
+    Return,
+    Super,
+    This,
+    True,
+    Var,
+    While,
+    Break,
+}
+
 impl TokenType {
     pub fn from_lexeme(keyword: &str) -> Option<Self> {
         match keyword {
-            "and" => Some(AND),
-            "class" => Some(CLASS),
-            "else" => Some(ELSE),
-            "false" => Some(FALSE),
-            "for" => Some(FOR),
-            "fun" => Some(FUN),
-            "if" => Some(IF),
-            "nil" => Some(NIL),
-            "or" => Some(OR),
-            "print" => Some(PRINT),
-            "return" => Some(RETURN),
-            "super" => Some(SUPER),
-            "this" => Some(THIS),
-            "true" => Some(TRUE),
-            "var" => Some(VAR),
-            "while" => Some(WHILE),
-            "break" => Some(BREAK),
+            "and" => Some(Self::Keyword(KeywordToken::And)),
+            "class" => Some(Self::Keyword(KeywordToken::Class)),
+            "else" => Some(Self::Keyword(KeywordToken::Else)),
+            "false" => Some(Self::Keyword(KeywordToken::False)),
+            "for" => Some(Self::Keyword(KeywordToken::For)),
+            "fun" => Some(Self::Keyword(KeywordToken::Fun)),
+            "if" => Some(Self::Keyword(KeywordToken::If)),
+            "nil" => Some(Self::Keyword(KeywordToken::Nil)),
+            "or" => Some(Self::Keyword(KeywordToken::Or)),
+            "print" => Some(Self::Keyword(KeywordToken::Print)),
+            "return" => Some(Self::Keyword(KeywordToken::Return)),
+            "super" => Some(Self::Keyword(KeywordToken::Super)),
+            "this" => Some(Self::Keyword(KeywordToken::This)),
+            "true" => Some(Self::Keyword(KeywordToken::True)),
+            "var" => Some(Self::Keyword(KeywordToken::Var)),
+            "while" => Some(Self::Keyword(KeywordToken::While)),
+            "break" => Some(Self::Keyword(KeywordToken::Break)),
             _ => None,
+        }
+    }
+}
+
+impl PartialEq<KeywordToken> for TokenType {
+    fn eq(&self, other: &KeywordToken) -> bool {
+        if let Self::Keyword(kt) = self
+            && kt == other
+        {
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl PartialEq<LiteralToken> for TokenType {
+    fn eq(&self, other: &LiteralToken) -> bool {
+        if let Self::Literal(lt) = self
+            && lt == other
+        {
+            true
+        } else {
+            false
         }
     }
 }
 
 impl Display for TokenType {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        match self {
+            Self::Keyword(keyword) => std::fmt::Display::fmt(keyword, f),
+            Self::Literal(literal) => std::fmt::Display::fmt(literal, f),
+        }
+    }
+}
+
+impl Display for KeywordToken {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         let output = match *self {
-            LEFT_PAREN => "(",
-            RIGHT_PAREN => ")",
-            LEFT_BRACE => "{",
-            RIGHT_BRACE => "}",
-            COMMA => ",",
-            DOT => ".",
-            MINUS => "-",
-            PLUS => "+",
-            SEMICOLON => ";",
-            SLASH => "/",
-            STAR => "*",
-            QUESTION_MARK => "?",
-            COLON => ":",
+            Self::LeftParen => "(",
+            Self::RightParen => ")",
+            Self::LeftBrace => "{",
+            Self::RightBrace => "}",
+            Self::Comma => ",",
+            Self::Dot => ".",
+            Self::Minus => "-",
+            Self::Plus => "+",
+            Self::Semicolon => ";",
+            Self::Slash => "/",
+            Self::Star => "*",
+            Self::QuestionMark => "?",
 
-            BANG => "!",
-            BANG_EQUAL => "!=",
-            EQUAL => "=",
-            EQUAL_EQUAL => "==",
-            GREATER => ">",
-            GREATER_EQUAL => ">=",
-            LESS => "<",
-            LESS_EQUAL => "<=",
+            Self::Colon => ":",
+            Self::Bang => "!",
+            Self::BangEqual => "!=",
+            Self::Equal => "=",
+            Self::EqualEqual => "==",
+            Self::Greater => ">",
+            Self::GreaterEqual => ">=",
+            Self::Less => "<",
+            Self::LessEqual => "<=",
 
-            IDENTIFIER => "{IDENTIFIER}",
-            STRING => "{STRING}",
-            NUMBER => "{NUMBER}",
-            COMMENT => "{COMMENT}",
+            Self::And => "and",
+            Self::Class => "class",
+            Self::Else => "else",
+            Self::False => "false",
+            Self::Fun => "fun",
+            Self::For => "for",
+            Self::If => "if",
+            Self::Nil => "nil",
+            Self::Or => "or",
+            Self::Print => "print",
+            Self::Return => "return",
+            Self::Super => "super",
+            Self::This => "this",
+            Self::True => "true",
+            Self::Var => "var",
+            Self::While => "while",
+            Self::Break => "break",
+        };
+        write!(f, "{output}")
+    }
+}
 
-            AND => "and",
-            CLASS => "class",
-            ELSE => "else",
-            FALSE => "false",
-            FUN => "fun",
-            FOR => "for",
-            IF => "if",
-            NIL => "NIL",
-            OR => "or",
-            PRINT => "print",
-            RETURN => "return",
-            SUPER => "super",
-            THIS => "this",
-            TRUE => "true",
-            VAR => "var",
-            WHILE => "while",
-            BREAK => "break",
+impl Display for LiteralToken {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let output = match self {
+            Self::Identifier => "{identifier}",
+            Self::String => "{string}",
+            Self::Number => "{number}",
         };
         write!(f, "{output}")
     }
@@ -148,10 +178,10 @@ impl Debug for TokenType {
     }
 }
 
-pub trait OperatorSubset<P: 'static>:
-    TryFrom<P> + PartialEq + Eq + Copy + Clone
+pub trait TokenTypeSubset:
+    TryFrom<TokenType> + TryFrom<KeywordToken> + PartialEq + Eq + Copy + Clone
 {
-    const VARIANTS: &'static [P];
+    const VARIANTS: &'static [TokenType];
 }
 
 #[macro_export]
@@ -161,15 +191,25 @@ macro_rules! operator_subset {
         #[allow(non_camel_case_types, clippy::upper_case_acronyms)]
         pub enum $name { $($variant),* }
 
-        impl OperatorSubset<$crate::token_type::TokenType> for $name {
-            const VARIANTS: &'static [$crate::token_type::TokenType] = &[$($crate::token_type::TokenType::$variant),*];
+        impl TokenTypeSubset for $name {
+            const VARIANTS: &'static [$crate::token_type::TokenType] = &[$($crate::token_type::TokenType::Keyword($crate::token_type::KeywordToken::$variant)),*];
         }
 
         impl std::convert::TryFrom<$crate::token_type::TokenType> for $name {
             type Error = ();
             fn try_from(tt: $crate::token_type::TokenType) -> std::result::Result<Self, ()> {
                 match tt {
-                    $($crate::token_type::TokenType::$variant => Ok(Self::$variant),)*
+                    $($crate::token_type::TokenType::Keyword($crate::token_type::KeywordToken::$variant) => Ok(Self::$variant),)*
+                    _ => Err(()),
+                }
+            }
+        }
+
+        impl std::convert::TryFrom<$crate::token_type::KeywordToken> for $name {
+            type Error = ();
+            fn try_from(tt: $crate::token_type::KeywordToken) -> std::result::Result<Self, ()> {
+                match tt {
+                    $($crate::token_type::KeywordToken::$variant => Ok(Self::$variant),)*
                     _ => Err(()),
                 }
             }
@@ -177,7 +217,7 @@ macro_rules! operator_subset {
 
          impl std::fmt::Display for $name {
             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-                match self { $(Self::$variant => std::fmt::Display::fmt(&$crate::token_type::TokenType::$variant, f)),* }
+                match self { $(Self::$variant => std::fmt::Display::fmt(&$crate::token_type::KeywordToken::$variant, f)),* }
             }
         }
     };

@@ -1,6 +1,7 @@
 use crate::error_utils::StageError;
 use crate::expressions::Value;
 use crate::expressions::{BinaryOperator, UnaryOperator};
+use crate::token::Span;
 
 #[derive(Debug, Clone)]
 pub enum EvaluationError<'a> {
@@ -8,32 +9,32 @@ pub enum EvaluationError<'a> {
         lhs_type: &'static str,
         operator: BinaryOperator,
         rhs_type: &'static str,
-        line: usize,
+        span: Span,
     },
     UnsupportedUnaryOperand {
         operator: UnaryOperator,
         expr_type: &'static str,
-        line: usize,
+        span: Span,
     },
     UndefinedVariable {
         name: &'a str,
-        line: usize,
+        span: Span,
     },
     UnitialisedVariable {
         name: &'a str,
-        line: usize,
+        span: Span,
     },
     GroupErrors(Vec<Self>),
     NonFunctionCalled {
-        line: usize,
+        span: Span,
     },
     IncorrectArgumentCount {
-        line: usize,
+        span: Span,
         expected_arguments: usize,
         recieved_arguments_count: usize,
     },
     Return {
-        line: usize,
+        span: Span,
         value: Value<'a>,
     },
     Break,
@@ -58,84 +59,72 @@ impl<'a> From<EvaluationError<'a>> for StageError {
     fn from(val: EvaluationError<'a>) -> Self {
         match val {
             EvaluationError::UnsupportedBinaryOperand {
-                line,
+                span,
                 operator,
                 lhs_type,
                 rhs_type,
             } => Self {
-                line: Some(line),
+                span: Some(span),
                 message: format!(
-                    "Line {line}\nEvaluation Error: Unsupported operand type for {operator}: '{lhs_type}' and '{rhs_type}'"
+                    "Unsupported operand type for {operator}: '{lhs_type}' and '{rhs_type}'"
                 ),
-                error_location: None,
                 stage: "evaulation",
                 children: Vec::new(),
             },
             EvaluationError::UnsupportedUnaryOperand {
-                line,
+                span,
                 operator,
                 expr_type,
             } => Self {
-                line: Some(line),
+                span: Some(span),
                 message: format!(
-                    "Line {line}\n Evaluation Error: Bad operand type for unary {operator}: '{expr_type}'"
+                    "Bad operand type for unary {operator}: '{expr_type}'"
                 ),
-                error_location: None,
                 stage: "evaulation",
                 children: Vec::new(),
             },
-            EvaluationError::UndefinedVariable { name, line } => Self {
-                line: Some(line),
-                message: format!(
-                    "Line {line}\n Evaluation Error: Variable {name} is not defined"
-                ),
-                error_location: Some(name.to_owned()),
+            EvaluationError::UndefinedVariable { name, span } => Self {
+                span: Some(span),
+                message: format!("Variable {name} is not defined"),
                 stage: "evaulation",
                 children: Vec::new(),
             },
-            EvaluationError::UnitialisedVariable { name, line } => Self {
-                line: Some(line),
-                message: format!(
-                    "Line {line}\n Evaluation Error: Variable {name} is not initalised"
-                ),
-                error_location: Some(name.to_owned()),
+            EvaluationError::UnitialisedVariable { name, span } => Self {
+                span: Some(span),
+                message: format!("Variable {name} is not initalised"),
                 stage: "evaulation",
                 children: Vec::new(),
             },
             EvaluationError::GroupErrors(errors) => Self {
-                line: None,
+                span: None,
                 message: "Error while evaluating group".to_owned(),
-                error_location: None,
                 stage: "evaluation",
                 children: errors.into_iter().map(Into::into).collect(),
             },
             EvaluationError::Break => unreachable!(
                 "Parser should prevent break from being returned as an error"
             ),
-            EvaluationError::Return { line, value: _ } => Self {
-                line: Some(line),
+            EvaluationError::Return { span, value: _ } => Self {
+                span: Some(span),
                 message: "Return used outside of function".to_owned(),
-                error_location: Some("return".to_owned()),
                 stage: "evaluation",
                 children: Vec::new(),
             },
-            EvaluationError::NonFunctionCalled { line } => Self {
-                line: Some(line),
+            EvaluationError::NonFunctionCalled { span } => Self {
+                span: Some(span),
                 message: "Can only call functions and classes".to_owned(),
-                error_location: None,
                 stage: "evaluation",
                 children: Vec::new(),
             },
             EvaluationError::IncorrectArgumentCount {
-                line,
+                span,
                 expected_arguments,
                 recieved_arguments_count,
             } => Self {
-                line: Some(line),
+                span: Some(span),
                 message: format!(
                     "Expected {expected_arguments} arguments, but got {recieved_arguments_count}."
                 ),
-                error_location: None,
                 stage: "evaluation",
                 children: Vec::new(),
             },

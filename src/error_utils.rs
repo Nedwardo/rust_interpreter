@@ -4,44 +4,49 @@ use std::fmt::Debug;
 use std::fmt::Write as _;
 use std::fmt::{Display, Formatter};
 
+use crate::token::Span;
+
 #[derive(Debug)]
 pub struct StageError {
-    pub line: Option<usize>,
+    pub span: Option<Span>,
     pub message: String,
-    pub error_location: Option<String>,
     pub stage: &'static str,
     pub children: Vec<Self>,
 }
 
+fn get_line_from_span(string: &str, index: usize) -> &str {
+    let start = string[..index].rfind('\n').map_or(0, |i| i + 1);
+    let end = string[index..]
+        .find('\n')
+        .map_or(string.len(), |i| index + i);
+    &string[start..end]
+}
+
 impl StageError {
     fn generate_error_message(&self, source_string: &str) -> String {
-        let mut formatted_error_message = self.line.map_or_else(
+        let mut formatted_error_message = self.span.map_or_else(
             || format!("Error during {}: {}", self.stage, self.message),
-            |line| {
-                let source_line =
-                source_string.split('\n').nth(line - 1).unwrap_or("EOF");
+            |span| {
 
-            self.error_location.as_ref().map_or_else(
-            || {
-                format!(
-                    "Error during {}: {}\n {: >3} | {}",
-                    self.stage, self.message, line, source_line
-                )
-            },
-            |error_location| {
-                highlight_line_selection(
-                    line,
-                    source_line,
-                    error_location,
+        let error_source = &source_string[span.0..span.1];
+        let error_line_number = source_string[..span.0]
+            .chars()
+            .filter(|c| *c == '\n')
+            .count() + 1;
+        let error_line = get_line_from_span(source_string, span.0);
+
+        highlight_line_selection(
+                    error_line_number,
+                    error_line,
+                    error_source,
                 ).map_or_else(
-                || format!("Errored generating the error message for {self:?}\nCouldn't find {error_location:?} in {source_line:?}")
+                || format!("Errored generating the error message for {self:?}\nCouldn't find {error_source:?} in {error_line:?}")
                 , |line_selection| format!(
                     "Error during {}: {}\n{}",
                     self.stage, self.message, line_selection
                 )
                 )
-            },
-        )});
+            });
 
         for error_source in &self.children {
             formatted_error_message.push('\n');

@@ -1,4 +1,6 @@
 mod resolver_error;
+use log::trace;
+
 use crate::error_utils::StageError;
 use crate::evaluator::environment::{LookupMap, VariableBinding};
 use crate::resolver::resolver_error::ResolverError;
@@ -14,8 +16,15 @@ use crate::expressions::{
 };
 
 type Scope<'a> = HashMap<&'a str, bool>;
+
+#[derive(Debug, PartialEq, Clone)]
+enum FunctionType {
+    Function,
+}
+
 pub struct Resolver<'a> {
     symbol_table: Vec<Scope<'a>>,
+    current_function_state: Option<FunctionType>,
 }
 
 pub fn resolve<'a>(
@@ -29,10 +38,12 @@ impl<'a> Resolver<'a> {
     pub const fn new() -> Self {
         Self {
             symbol_table: Vec::new(),
+            current_function_state: None,
         }
     }
 
     fn narrow(&mut self) {
+        trace!("Narrowing");
         self.symbol_table.push(Scope::new());
     }
 
@@ -40,15 +51,29 @@ impl<'a> Resolver<'a> {
         self.symbol_table.pop();
     }
 
-    fn declare(&mut self, name: &'a str) {
+    fn declare(
+        &mut self,
+        binding: &VariableBinding<'a>,
+    ) -> Result<(), ResolverError> {
+        trace!("Declaring {:#?}", binding.name);
         if let Some(scope) = self.symbol_table.last_mut() {
-            let _ = scope.insert(name, false);
+            if scope.contains_key(binding.name) {
+                return Err(ResolverError::VariableAlreadyExists {
+                    name: binding.name.to_owned(),
+                    span: binding.span,
+                });
+            }
+            let _ = scope.insert(binding.name, false);
+            trace!("Success");
         }
+        Ok(())
     }
 
     fn define(&mut self, name: &'a str) {
+        trace!("Defining {name}");
         if let Some(scope) = self.symbol_table.last_mut() {
             let _ = scope.insert(name, true);
+            trace!("Success");
         }
     }
 
@@ -69,35 +94,22 @@ impl<'a> Resolver<'a> {
     ) -> Result<LookupMap<'a>, ResolverError> {
         match statement {
             Break => Ok(HashMap::new()),
-            Declaration { name, expression } => {
-                self.declare(name);
-                let binding = expression.as_ref().map_or_else(
+            Declaration {
+                binding,
+                expression,
+            } => {
+                self.declare(binding)?;
+                let value = expression.as_ref().map_or_else(
                     || Ok(HashMap::new()),
                     |expr| self.resolve_expression(expr),
                 );
-                self.define(name);
-                binding
+                self.define(binding.name);
+                value
             }
             Expression(expr) | Print(expr) => self.resolve_expression(expr),
-            FunctionDeclaration(Function {
-                name: _,
-                body,
-                params,
-            }) => {
-                self.narrow();
-                for token in params {
-                    self.declare(token);
-                    self.define(token);
-                }
-                let binding = if let FunctionKind::Lox(lox_body) = body {
-                    self.resolve_statement(lox_body)
-                } else {
-                    Ok(HashMap::new())
-                };
-                self.widen();
-                binding
-            }
+            FunctionDeclaration(function) => self.resolve_function(function),
             Group(statements) => {
+                trace!("Group: {:?}", self.symbol_table);
                 self.narrow();
                 let result = self.resolve_statements(statements);
                 self.widen();
@@ -116,10 +128,16 @@ impl<'a> Resolver<'a> {
                 Ok(locals)
             }
 
-            Return { line: _, value } => value.as_ref().map_or_else(
-                || Ok(HashMap::new()),
-                |expr| self.resolve_expression(expr),
-            ),
+            Return { span, value } => {
+                if self.current_function_state == Some(FunctionType::Function) {
+                    value.as_ref().map_or_else(
+                        || Ok(HashMap::new()),
+                        |expr| self.resolve_expression(expr),
+                    )
+                } else {
+                    Err(ResolverError::ReturnFromTopLevel(*span))
+                }
+            }
             While { condition, body } => {
                 let mut locals = self.resolve_expression(condition)?;
                 locals.extend(self.resolve_statement(body)?);
@@ -135,12 +153,14 @@ impl<'a> Resolver<'a> {
         match &expr.kind {
             ExprKind::Assignment(Assignment { name, expr }) => {
                 let binding = VariableBinding {
-                    line: expr.line,
+                    span: expr.span,
                     name,
                 };
                 let mut locals = self.resolve_expression(expr)?;
-                let depth = self.resolve_local(name);
-                locals.insert(binding, depth);
+                trace!("Creating assignment for {binding:?}");
+                if let Some(depth) = self.resolve_local(name) {
+                    locals.insert(binding, depth);
+                }
                 Ok(locals)
             }
             ExprKind::Binary(Binary {
@@ -172,34 +192,22 @@ impl<'a> Resolver<'a> {
                     return Err(
                         ResolverError::VariableReferencedInInitalisation {
                             name: name.to_string(),
-                            line: expr.line,
+                            span: expr.span,
                         },
                     );
                 }
                 let binding = VariableBinding {
-                    line: expr.line,
+                    span: expr.span,
                     name,
                 };
-                Ok(HashMap::from([(binding, self.resolve_local(name))]))
+                trace!("Resolving local: {binding:?}");
+                Ok(self
+                    .resolve_local(name)
+                    .map_or_else(HashMap::new, |depth| {
+                        HashMap::from([(binding, depth)])
+                    }))
             }
-            ExprKind::Lambda(Function {
-                name: _,
-                body,
-                params,
-            }) => {
-                self.narrow();
-                for token in params {
-                    self.declare(token);
-                    self.define(token);
-                }
-
-                let mut locals = HashMap::new();
-                if let FunctionKind::Lox(lox_body) = body {
-                    locals.extend(self.resolve_statement(lox_body)?);
-                }
-                self.widen();
-                Ok(locals)
-            }
+            ExprKind::Lambda(function) => self.resolve_function(function),
             ExprKind::Unary(Unary { operator: _, expr }) => {
                 self.resolve_expression(expr)
             }
@@ -207,12 +215,45 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    fn resolve_local(&self, name: &'a str) -> usize {
+    fn resolve_function(
+        &mut self,
+        function: &Function<'a>,
+    ) -> Result<LookupMap<'a>, ResolverError> {
+        self.declare(&function.binding)?;
+        self.define(function.binding.name);
+
+        trace!("res func");
+        self.narrow();
+        for token in &function.params {
+            self.declare(token)?;
+            self.define(token.name);
+        }
+        let binding = if let FunctionKind::Lox(lox_body) = &function.body {
+            let prior_function_state = self.current_function_state.clone();
+            self.current_function_state = Some(FunctionType::Function);
+
+            let lookup_map = self.resolve_statement(lox_body);
+            self.current_function_state = prior_function_state;
+            lookup_map
+        } else {
+            Ok(HashMap::new())
+        };
+        self.widen();
+        binding
+    }
+
+    fn resolve_local(&self, name: &'a str) -> Option<usize> {
+        let symbol_table_len = self.symbol_table.len();
         for (index, scope) in self.symbol_table.iter().enumerate().rev() {
             if scope.get(name).is_some() {
-                return index;
+                trace!(
+                    "Resolved {name}, with {:?}, giving dist of {:?}",
+                    self.symbol_table,
+                    symbol_table_len - index - 1
+                );
+                return Some(symbol_table_len - index - 1);
             }
         }
-        panic!("Should not be reachable, will return to this");
+        None
     }
 }

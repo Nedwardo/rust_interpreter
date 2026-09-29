@@ -42,6 +42,8 @@ pathbuf_init_then_push = "warn"
 non_zero_suggestions = "warn"
 
 [dependencies]
+clap = { version = "4.6.6", features = ["derive"] }
+clap-verbosity = "2.1.0"
 gag = "1.0.0"
 log = {version = "0.4.33", features = ["std"]}
 

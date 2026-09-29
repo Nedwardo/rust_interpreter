@@ -1,5 +1,6 @@
 use crate::error_utils::StageError;
-use crate::token::Token;
+use crate::expressions::ValueError;
+use crate::token::{Span, Token};
 use crate::token_type::TokenType;
 
 #[derive(Debug, Clone)]
@@ -11,13 +12,12 @@ pub struct ParserError {
 #[derive(Debug, Clone)]
 pub enum ParserErrorKind {
     UnexpectedToken {
-        source: String,
-        line: usize,
+        span: Span,
         token_type: TokenType,
         expected_token_types: Vec<TokenType>,
     },
     InvalidAssignmentTarget {
-        line: usize,
+        span: Span,
     },
     EOFWhileExpecting {
         expected_token_types: Vec<TokenType>,
@@ -26,35 +26,29 @@ pub enum ParserErrorKind {
         expected: &'static str,
     },
     TooManyArguments {
-        line: usize,
+        span: Span,
     },
     BlockError {
         errors: Vec<ParserError>,
     },
+    ValueError(ValueError),
 }
 
 impl ParserError {
-    pub fn unexpected_token(
-        token: &Token<'_>,
-        token_types: &[TokenType],
-    ) -> Self {
+    pub fn unexpected_token(token: &Token, token_types: &[TokenType]) -> Self {
         Self {
             kind: ParserErrorKind::UnexpectedToken {
-                source: token.token_value.map_or_else(
-                    || token.kind.to_string(),
-                    |token| token.to_string(),
-                ),
-                line: token.line,
-                token_type: token.kind,
+                span: token.span,
+                token_type: token.token_kind,
                 expected_token_types: token_types.to_owned(),
             },
             synchronise: true,
         }
     }
 
-    pub const fn invalid_assignment_target(line: usize) -> Self {
+    pub const fn invalid_assignment_target(span: Span) -> Self {
         Self {
-            kind: ParserErrorKind::InvalidAssignmentTarget { line },
+            kind: ParserErrorKind::InvalidAssignmentTarget { span },
             synchronise: true,
         }
     }
@@ -66,9 +60,9 @@ impl ParserError {
         }
     }
 
-    pub const fn too_many_arguments(line: usize, synchronise: bool) -> Self {
+    pub const fn too_many_arguments(span: Span, synchronise: bool) -> Self {
         Self {
-            kind: ParserErrorKind::TooManyArguments { line },
+            kind: ParserErrorKind::TooManyArguments { span },
             synchronise,
         }
     }
@@ -88,18 +82,24 @@ impl ParserError {
             synchronise,
         }
     }
+
+    pub const fn value_error(error: ValueError) -> Self {
+        Self {
+            kind: ParserErrorKind::ValueError(error),
+            synchronise: false,
+        }
+    }
 }
 
 impl From<ParserError> for StageError {
     fn from(val: ParserError) -> Self {
         match val.kind {
             ParserErrorKind::UnexpectedToken {
-                source,
-                line,
+                span,
                 token_type,
                 expected_token_types,
             } => Self {
-                line: Some(line),
+                span: Some(span),
                 message: format!(
                     "Unexpected Token: Expected one of: {}, found {token_type}",
                     expected_token_types
@@ -108,51 +108,58 @@ impl From<ParserError> for StageError {
                         .collect::<Vec<_>>()
                         .join(", ")
                 ),
-                error_location: Some(source),
                 stage: "parsing",
                 children: Vec::new(),
             },
-            ParserErrorKind::InvalidAssignmentTarget { line } => Self {
-                line: Some(line),
+            ParserErrorKind::InvalidAssignmentTarget { span } => Self {
+                span: Some(span),
                 message: "Invalid assignment target".to_owned(),
-                error_location: Some("=".to_owned()),
                 stage: "parsing",
                 children: Vec::new(),
             },
             ParserErrorKind::EOFWhileExpecting {
                 expected_token_types,
             } => Self {
-                line: None,
+                span: None,
                 message: format!(
                     "Found EOF while expecting {expected_token_types:?}"
                 ),
-                error_location: None,
                 stage: "parsing",
                 children: Vec::new(),
             },
             ParserErrorKind::UnexpectedEOF { expected } => Self {
-                line: None,
+                span: None,
                 message: format!("Unexpected EOF, while parsing {expected}"),
-                error_location: None,
                 stage: "parsing",
                 children: Vec::new(),
             },
-            ParserErrorKind::TooManyArguments { line } => Self {
-                line: Some(line),
+            ParserErrorKind::TooManyArguments { span } => Self {
+                span: Some(span),
                 message: "Can't have more than 255 arguments.".to_owned(),
-                error_location: None,
                 stage: "Parsing",
                 children: Vec::new(),
             },
             ParserErrorKind::BlockError { errors } => Self {
-                line: None,
+                span: None,
                 message: "Error while generating block".to_owned(),
-                error_location: None,
                 stage: "parsing",
                 children: errors
                     .iter()
                     .map(|e| Self::from(e.clone()))
                     .collect(),
+            },
+            ParserErrorKind::ValueError(ValueError::NotAValue(span)) => Self {
+                span: Some(span),
+                message: "Expected a value".to_owned(),
+                stage: "parsing",
+                children: vec![],
+            },
+
+            ParserErrorKind::ValueError(ValueError::NotANumber(span)) => Self {
+                span: Some(span),
+                message: "Value is not a number".to_owned(),
+                stage: "parsing",
+                children: vec![],
             },
         }
     }
