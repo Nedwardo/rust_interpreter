@@ -6,31 +6,37 @@ pub enum ResolverError {
     ReturnFromTopLevel(Span),
 }
 
+impl ResolverError {
+    const fn span(&self) -> Span {
+        match self {
+            Self::VariableAlreadyExists { span, .. }
+            | Self::VariableReferencedInInitalisation { span, .. }
+            | Self::ReturnFromTopLevel(span) => *span,
+        }
+    }
+
+    pub fn message(&self) -> String {
+        match self {
+            Self::VariableAlreadyExists { name, .. } => {
+                format!("Variable {name} already exists")
+            }
+            Self::VariableReferencedInInitalisation { name, .. } => {
+                format!("Variable {name} referenced during initalisation")
+            }
+            Self::ReturnFromTopLevel(..) => {
+                "Can't return from top-level code".to_owned()
+            }
+        }
+    }
+}
+
 impl From<ResolverError> for StageError {
     fn from(value: ResolverError) -> Self {
-        match value {
-            ResolverError::VariableReferencedInInitalisation { name, span } => {
-                Self {
-                    span: Some(span),
-                    message: format!(
-                        "Variable {name} referenced during initalisation"
-                    ),
-                    stage: "Resolving",
-                    children: vec![],
-                }
-            }
-            ResolverError::VariableAlreadyExists { name, span } => Self {
-                span: Some(span),
-                message: format!("Variable {name} already exists"),
-                stage: "Resolving",
-                children: vec![],
-            },
-            ResolverError::ReturnFromTopLevel(span) => Self {
-                span: Some(span),
-                message: "Can't return from top-level code".to_owned(),
-                stage: "Resolving",
-                children: vec![],
-            },
+        Self {
+            span: Some(value.span()),
+            message: value.message(),
+            stage: "Resolving",
+            children: Vec::new(),
         }
     }
 }

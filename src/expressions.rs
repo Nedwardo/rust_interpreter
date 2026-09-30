@@ -323,7 +323,9 @@ impl<'a> Value<'a> {
     ) -> Result<Self, ValueError> {
         let sub_string = &source[token.span.0..token.span.1];
         match token.token_kind {
-            TT::Literal(LT::String) => Ok(Self::String(sub_string.to_owned())),
+            TT::Literal(LT::String) => {
+                Ok(Self::String(sub_string[1..sub_string.len() - 1].to_owned()))
+            }
             TT::Keyword(KT::True) => Ok(Self::Boolean(true)),
             TT::Keyword(KT::False) => Ok(Self::Boolean(false)),
             TT::Literal(LT::Number) => sub_string

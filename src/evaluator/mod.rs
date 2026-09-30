@@ -9,7 +9,7 @@ use crate::evaluator::environment::VariableBinding;
 use crate::evaluator::environment::{Environment, GetError};
 use crate::evaluator::evaluation_error::EvaluationError;
 use crate::evaluator::evaluation_error::EvaluationError::{
-    Break, Return, UndefinedVariable, UnitialisedVariable,
+    Break, Return, UndefinedVariable, UninitialisedVariable,
     UnsupportedBinaryOperand, UnsupportedUnaryOperand,
 };
 
@@ -77,6 +77,7 @@ fn eval<'a, W: Write + Debug>(
             trace!("Declaration");
             if let Some(expr) = expression {
                 let value = Some(visit(expr, env, writer)?);
+                trace!("Defining {binding:?} with {value:?}");
                 env.define(binding, value);
             } else {
                 env.define(binding, None);
@@ -169,30 +170,21 @@ fn visit<'a, W: Write + Debug>(
 
             env.get(&binding)
                 .map_err(|err| match err {
-                    GetError::Undefined => UndefinedVariable {
-                        name,
-                        span: expr.span,
-                    },
-                    GetError::Uninitalised => UnitialisedVariable {
-                        name,
-                        span: expr.span,
-                    },
+                    GetError::Undefined => UndefinedVariable(binding),
+                    GetError::Uninitalised => UninitialisedVariable(binding),
                 })
                 .cloned()
         }
         ExprKind::Assignment(assignment) => {
+            trace!("Assignment");
             let binding = VariableBinding {
                 name: assignment.name,
-                span: expr.span,
+                span: assignment.expr.span,
             };
             let value = visit(&assignment.expr, env, writer)?;
 
-            env.update(&binding, value.clone()).map_err(|()| {
-                UndefinedVariable {
-                    name: assignment.name,
-                    span: expr.span,
-                }
-            })?;
+            env.update(&binding, value.clone())
+                .map_err(|()| UndefinedVariable(binding))?;
             Ok(value)
         }
         ExprKind::Logical(logical) => visit_logical(logical, env, writer),
@@ -234,6 +226,7 @@ fn visit_binary<'a, W: Write + Debug>(
     env: &mut Environment<'a>,
     writer: &mut W,
 ) -> Result<Value<'a>, EvaluationError<'a>> {
+    trace!("Binary");
     let left_value = visit(&binary.left, env, writer)?;
     let right_value = visit(&binary.right, env, writer)?;
 
@@ -306,12 +299,7 @@ fn visit_call<'a, W: Write + Debug>(
     let function = visit(&call.callee, env, writer)?;
 
     let Value::Function {
-        declaration:
-            Function {
-                body,
-                params,
-                binding: _,
-            },
+        declaration: Function { body, params, .. },
         closure,
     } = function
     else {
@@ -321,7 +309,7 @@ fn visit_call<'a, W: Write + Debug>(
         return Err(EvaluationError::IncorrectArgumentCount {
             span,
             expected_arguments: params.len(),
-            recieved_arguments_count: call.arguments.len(),
+            received_arguments_count: call.arguments.len(),
         });
     }
 
@@ -347,7 +335,7 @@ fn visit_call<'a, W: Write + Debug>(
 
             match result {
                 Ok(_) => Ok(Value::Nil),
-                Err(Return { span: _, value }) => {
+                Err(Return { value, .. }) => {
                     trace!("Returning value: {value}");
                     Ok(value)
                 }

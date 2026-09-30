@@ -55,7 +55,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         binding: &VariableBinding<'a>,
     ) -> Result<(), ResolverError> {
-        trace!("Declaring {:#?}", binding.name);
+        trace!("Declaring {binding:#?}");
         if let Some(scope) = self.symbol_table.last_mut() {
             if scope.contains_key(binding.name) {
                 return Err(ResolverError::VariableAlreadyExists {
@@ -163,16 +163,8 @@ impl<'a> Resolver<'a> {
                 }
                 Ok(locals)
             }
-            ExprKind::Binary(Binary {
-                left,
-                operator: _,
-                right,
-            })
-            | ExprKind::Logical(Logical {
-                left,
-                operator: _,
-                right,
-            }) => {
+            ExprKind::Binary(Binary { left, right, .. })
+            | ExprKind::Logical(Logical { left, right, .. }) => {
                 let mut locals = self.resolve_expression(left)?;
                 locals.extend(self.resolve_expression(right)?);
                 Ok(locals)
@@ -208,7 +200,7 @@ impl<'a> Resolver<'a> {
                     }))
             }
             ExprKind::Lambda(function) => self.resolve_function(function),
-            ExprKind::Unary(Unary { operator: _, expr }) => {
+            ExprKind::Unary(Unary { expr, .. }) => {
                 self.resolve_expression(expr)
             }
             ExprKind::Literal(_) => Ok(HashMap::new()),

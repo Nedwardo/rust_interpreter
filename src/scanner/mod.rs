@@ -177,6 +177,7 @@ impl<'a> Cursor<'a> {
         if let Some(character) = result {
             self.index += character.len_utf8();
         }
+
         result
     }
 

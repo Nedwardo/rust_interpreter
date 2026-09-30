@@ -51,7 +51,7 @@ impl TokenCursor {
     fn new(tokens: IntoIter<Token>) -> Self {
         Self {
             tokens: tokens.peekable(),
-            checked_tokens: vec![],
+            checked_tokens: Vec::new(),
         }
     }
 
@@ -103,10 +103,10 @@ impl TokenCursor {
         Ok(())
     }
 
-    fn consume_if_map_success<T>(
+    fn consume_if_map_success<T: std::fmt::Debug>(
         &mut self,
         expected: &[TT],
-        f: impl FnOnce(&Token) -> Result<T, Error>,
+        f: impl Fn(&Token) -> Result<T, Error>,
     ) -> Result<T, Error> {
         self.checked_tokens.extend(expected);
 
@@ -242,7 +242,7 @@ impl<'a> Parser<'a> {
     ) -> Result<Function<'a>, Error> {
         self.tokens.consume_if(&[TT::Keyword(KT::LeftParen)])?;
 
-        let mut params = vec![];
+        let mut params = Vec::new();
         while let Ok(param) = self.tokens.consume_identifier_span() {
             params.push(VariableBinding::from_span(param, self.source));
             if params.len() >= 255 {
@@ -266,7 +266,6 @@ impl<'a> Parser<'a> {
     fn keyword(&mut self) -> Result<Statement<'a>, Error> {
         debug!("Keyword");
         let Ok((keyword, span)) = self.tokens.peek_token_subset() else {
-            // no keyword token, treat as an expression statement
             let statement = self.expression(0).map(Statement::Expression)?;
             self.tokens.consume_semicolon_or_eof()?;
             return Ok(statement);
@@ -281,7 +280,6 @@ impl<'a> Parser<'a> {
             }
             Keyword::Fun => self.function_declaration(span)?,
             Keyword::Print => {
-                debug!("Print");
                 let statement = self.expression(0).map(Statement::Print)?;
                 self.tokens.consume_semicolon_or_eof()?;
                 statement
@@ -433,7 +431,6 @@ impl<'a> Parser<'a> {
         let lhs = self.build_logical(current_precedence)?;
 
         if let Ok(token) = self.tokens.consume_if(&[TT::Keyword(KT::Equal)]) {
-            debug!("Building an assignment from {token:?}");
             let rhs = self.expression(current_precedence)?;
 
             if let ExprKind::Identifier(name) = lhs.kind {
@@ -527,11 +524,17 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_value(&mut self) -> Result<Expr<'a>, Error> {
+        debug!("Value");
         self.tokens
             .consume_if_map_success(Value::token_types(), |token| {
-                let value = Value::try_from(token, self.source)
-                    .map_err(Error::value_error)?;
-                Ok(Expr::literal(value, token.span))
+                if matches!(token.token_kind, TT::Literal(LT::Identifier)) {
+                    let identifier = &self.source[token.span.0..token.span.1];
+                    Ok(Expr::identifier(identifier, token.span))
+                } else {
+                    let value = Value::try_from(token, self.source)
+                        .map_err(Error::value_error)?;
+                    Ok(Expr::literal(value, token.span))
+                }
             })
     }
 
@@ -542,7 +545,6 @@ impl<'a> Parser<'a> {
         while let Some(next) = self.tokens.peek()
             && next.token_kind != KT::RightParen
         {
-            debug!("First call arg = {next:?}");
             arguments.push(self.expression(5)?);
             if arguments.len() >= 255 {
                 return Err(Error::too_many_arguments(

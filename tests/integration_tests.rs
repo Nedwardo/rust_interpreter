@@ -82,7 +82,7 @@ mod integration_tests {
 
         let result = run(lox_script, &mut output);
 
-        assert_eq!(output, "\"Hi, Dear Reader!\"\n");
+        assert_eq!(output, "Hi, Dear Reader!\n");
         assert!(matches!(result.unwrap().unwrap(), Value::Nil));
     }
 

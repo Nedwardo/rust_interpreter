@@ -12,7 +12,7 @@ pub fn define_globals(environment: &mut Environment<'_>) {
         Value::Function {
             declaration: Function {
                 body: FunctionKind::Rust(clock),
-                params: vec![],
+                params: Vec::new(),
                 binding: VariableBinding {
                     name: "clock",
                     span: (0, 0),

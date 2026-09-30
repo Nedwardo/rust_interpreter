@@ -78,7 +78,7 @@ impl<'a> Environment<'a> {
     pub fn new(locals: LookupMap<'a>) -> Self {
         let mut env = Environment {
             locals,
-            frames: vec![],
+            frames: Vec::new(),
             globals: Frame::new(),
         };
         define_globals(&mut env);
@@ -110,12 +110,10 @@ impl<'a> Environment<'a> {
         value: Option<Value<'a>>,
     ) {
         let frame_size = self.frames.len();
-        let distance = self.locals.get(binding);
-        trace!("Defining: {binding:?}, at {distance:?}");
         trace!("frame size = {frame_size}");
 
-        if let Some(dist) = distance {
-            self.frames[frame_size - dist - 1].insert(binding.name, value);
+        if let Some(frame) = self.frames.last_mut() {
+            frame.insert(binding.name, value);
         } else {
             self.globals.insert(binding.name, value);
         }

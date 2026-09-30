@@ -14,39 +14,39 @@ pub struct StageError {
     pub children: Vec<Self>,
 }
 
-fn get_line_from_span(string: &str, index: usize) -> &str {
+fn get_line_span(string: &str, index: usize) -> Span {
     let start = string[..index].rfind('\n').map_or(0, |i| i + 1);
     let end = string[index..]
         .find('\n')
         .map_or(string.len(), |i| index + i);
-    &string[start..end]
+    (start, end)
 }
 
 impl StageError {
     fn generate_error_message(&self, source_string: &str) -> String {
-        let mut formatted_error_message = self.span.map_or_else(
-            || format!("Error during {}: {}", self.stage, self.message),
-            |span| {
+        let mut formatted_error_message = if self.message.is_empty() {
+            String::new()
+        } else if let Some(span) = self.span {
+            let error_line_number = source_string[..span.0]
+                .chars()
+                .filter(|c| *c == '\n')
+                .count()
+                + 1;
+            let error_line = get_line_span(source_string, span.0);
 
-        let error_source = &source_string[span.0..span.1];
-        let error_line_number = source_string[..span.0]
-            .chars()
-            .filter(|c| *c == '\n')
-            .count() + 1;
-        let error_line = get_line_from_span(source_string, span.0);
-
-        highlight_line_selection(
-                    error_line_number,
-                    error_line,
-                    error_source,
-                ).map_or_else(
-                || format!("Errored generating the error message for {self:?}\nCouldn't find {error_source:?} in {error_line:?}")
-                , |line_selection| format!(
-                    "Error during {}: {}\n{}",
-                    self.stage, self.message, line_selection
-                )
-                )
-            });
+            let line_selection = highlight_line_selection(
+                source_string,
+                error_line_number,
+                error_line,
+                span,
+            );
+            format!(
+                "Error during {}: {}\n{line_selection}",
+                self.stage, self.message
+            )
+        } else {
+            format!("Error during {}: {}", self.stage, self.message)
+        };
 
         for error_source in &self.children {
             formatted_error_message.push('\n');
@@ -104,17 +104,17 @@ impl Debug for HydratedStageError {
 impl Error for HydratedStageError {}
 
 pub fn highlight_line_selection(
+    source: &str,
     line_number: usize,
-    line: &str,
-    substr: &str,
-) -> Option<String> {
-    let start_index = line.find(substr)?;
-    let substr_length = substr.chars().count();
-    let carets = "^".repeat(substr_length);
+    line_span: Span,
+    highlight_span: Span,
+) -> String {
+    let line = &source[line_span.0..line_span.1];
+    let offset = highlight_span.0 - line_span.0;
+    let substr_length = highlight_span.1 - highlight_span.0;
 
-    let substring_highlighter =
-        format!("{carets:>width$}", width = start_index + substr_length);
-    Some(format!(
-        "{line_number:>4} | {line}\n     | {substring_highlighter}"
-    ))
+    let carets = "^".repeat(substr_length);
+    let pre_spacing = " ".repeat(offset);
+
+    format!("{line_number:>4} | {line}\n     | {pre_spacing}{carets}",)
 }
