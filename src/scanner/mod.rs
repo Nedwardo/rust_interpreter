@@ -108,15 +108,13 @@ impl<'a> Scanner<'a> {
     }
 
     fn build_string(&mut self) -> Result<Token, Error> {
-        let (span, success) = self.iter.consume_string();
-        if !success {
-            return Err(Error {
+        match self.iter.consume_string() {
+            Ok(span) => Ok(Token::new(TT::Literal(LT::String), span)),
+            Err(span) => Err(Error {
                 message: "Unterminated string",
                 error_location: span,
-            });
+            }),
         }
-
-        Ok(Token::new(TT::Literal(LT::String), span))
     }
 
     fn build_number(&mut self) -> Token {
@@ -192,7 +190,7 @@ impl<'a> Cursor<'a> {
         }
     }
 
-    fn consume_string(&mut self) -> (Span, bool) {
+    fn consume_string(&mut self) -> Result<Span, Span> {
         let start = self.index;
 
         let first = self.pop();
@@ -200,8 +198,13 @@ impl<'a> Cursor<'a> {
 
         self.advance_while(|c| c != '"');
         let terminated_by_quote = self.pop().is_some();
+        let span = (start, self.index);
 
-        ((start, self.index), terminated_by_quote)
+        if terminated_by_quote {
+            Ok(span)
+        } else {
+            Err(span)
+        }
     }
 
     fn consume_number(&mut self) -> Span {

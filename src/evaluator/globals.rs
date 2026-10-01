@@ -6,7 +6,7 @@ use crate::{
     expressions::{Function, FunctionKind, Value},
 };
 
-pub fn define_globals(environment: &mut Environment<'_>) {
+pub fn define_globals(environment: &Environment<'_>) {
     environment.add_global(
         "clock",
         Value::Function {

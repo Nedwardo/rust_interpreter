@@ -168,12 +168,10 @@ fn visit<'a, W: Write + Debug>(
                 span: expr.span,
             };
 
-            env.get(&binding)
-                .map_err(|err| match err {
-                    GetError::Undefined => UndefinedVariable(binding),
-                    GetError::Uninitalised => UninitialisedVariable(binding),
-                })
-                .cloned()
+            env.get(&binding).map_err(|err| match err {
+                GetError::Undefined => UndefinedVariable(binding),
+                GetError::Uninitalised => UninitialisedVariable(binding),
+            })
         }
         ExprKind::Assignment(assignment) => {
             trace!("Assignment");

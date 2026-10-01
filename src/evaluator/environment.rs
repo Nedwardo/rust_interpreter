@@ -3,8 +3,10 @@ use log::trace;
 use crate::evaluator::globals::define_globals;
 use crate::expressions::Value;
 use crate::token::Span;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::rc::Rc;
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
 pub struct VariableBinding<'a> {
@@ -24,35 +26,27 @@ impl<'a> VariableBinding<'a> {
 pub type LookupMap<'a> = HashMap<VariableBinding<'a>, usize>;
 
 #[derive(Clone)]
-pub struct Frame<'a>(HashMap<&'a str, Option<Value<'a>>>);
+pub struct Frame<'a>(Rc<RefCell<HashMap<&'a str, Option<Value<'a>>>>>);
 
 impl<'a> Frame<'a> {
     pub fn new() -> Self {
-        Self(HashMap::new())
+        Self(Rc::new(RefCell::new(HashMap::new())))
     }
 
-    pub fn insert(&mut self, key: &'a str, value: Option<Value<'a>>) {
-        self.0.insert(key, value);
+    pub fn insert(&self, key: &'a str, value: Option<Value<'a>>) {
+        self.0.borrow_mut().insert(key, value);
     }
 
     pub fn contains_key(&self, key: &'a str) -> bool {
-        self.0.contains_key(key)
+        self.0.borrow().contains_key(key)
     }
 
-    pub fn get(&self, key: &'a str) -> Result<&Value<'a>, GetError> {
-        self.0.get(key).map_or(Err(GetError::Undefined), |value| {
-            value.as_ref().ok_or(GetError::Uninitalised)
-        })
-    }
-
-    pub fn get_mut(
-        &mut self,
-        key: &'a str,
-    ) -> Result<&mut Value<'a>, GetError> {
+    pub fn get(&self, key: &'a str) -> Result<Value<'a>, GetError> {
         self.0
-            .get_mut(key)
+            .borrow()
+            .get(key)
             .map_or(Err(GetError::Undefined), |value| {
-                value.as_mut().ok_or(GetError::Uninitalised)
+                value.clone().ok_or(GetError::Uninitalised)
             })
     }
 }
@@ -76,12 +70,12 @@ pub enum GetError {
 
 impl<'a> Environment<'a> {
     pub fn new(locals: LookupMap<'a>) -> Self {
-        let mut env = Environment {
+        let env = Environment {
             locals,
             frames: Vec::new(),
             globals: Frame::new(),
         };
-        define_globals(&mut env);
+        define_globals(&env);
         env
     }
 
@@ -120,7 +114,7 @@ impl<'a> Environment<'a> {
     }
 
     pub fn update(
-        &mut self,
+        &self,
         binding: &VariableBinding<'a>,
         value: Value<'a>,
     ) -> Result<(), ()> {
@@ -142,7 +136,7 @@ impl<'a> Environment<'a> {
     pub fn get(
         &self,
         binding: &VariableBinding<'a>,
-    ) -> Result<&Value<'a>, GetError> {
+    ) -> Result<Value<'a>, GetError> {
         let distance = self.locals.get(binding);
         trace!("getting: {binding:?}, dist = {distance:?}");
         trace!("frames: {:?}", self.frames);
@@ -152,7 +146,7 @@ impl<'a> Environment<'a> {
         )
     }
 
-    pub fn add_global(&mut self, name: &'a str, value: Value<'a>) {
+    pub fn add_global(&self, name: &'a str, value: Value<'a>) {
         self.globals.insert(name, Some(value));
     }
 }

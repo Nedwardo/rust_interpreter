@@ -116,5 +116,5 @@ pub fn highlight_line_selection(
     let carets = "^".repeat(substr_length);
     let pre_spacing = " ".repeat(offset);
 
-    format!("{line_number:>4} | {line}\n     | {pre_spacing}{carets}",)
+    format!("{line_number:>4} | {line}\n     | {pre_spacing}{carets}")
 }
