@@ -15,7 +15,39 @@ use crate::expressions::{
     Statement, Unary,
 };
 
-type Scope<'a> = HashMap<&'a str, bool>;
+#[derive(Debug)]
+struct Scope<'a>(HashMap<&'a str, (bool, VariableBinding<'a>)>);
+
+impl<'a> Scope<'a> {
+    pub fn new() -> Self {
+        Self(HashMap::new())
+    }
+
+    fn get(&self, name: &'a str) -> Option<&bool> {
+        self.0.get(name).map(|(v, ..)| v)
+    }
+
+    fn undefined_values(&self) -> Vec<VariableBinding<'a>> {
+        self.0
+            .values()
+            .filter_map(|(v, binding)| (!v).then_some(binding.clone()))
+            .collect()
+    }
+
+    fn contains(&self, key: &'a str) -> bool {
+        self.0.contains_key(key)
+    }
+
+    fn insert(
+        &mut self,
+        binding: &VariableBinding<'a>,
+        value: bool,
+    ) -> Option<bool> {
+        self.0
+            .insert(binding.name, (value, binding.clone()))
+            .map(|(v, ..)| v)
+    }
+}
 
 #[derive(Debug, PartialEq, Clone)]
 enum FunctionType {
@@ -47,32 +79,43 @@ impl<'a> Resolver<'a> {
         self.symbol_table.push(Scope::new());
     }
 
-    fn widen(&mut self) {
-        self.symbol_table.pop();
+    fn widen(&mut self) -> Result<(), ResolverError<'a>> {
+        let symbols = self
+            .symbol_table
+            .pop()
+            .expect("Widen to only be used after a narrow");
+
+        let undefined_values: Vec<_> = symbols.undefined_values();
+
+        if undefined_values.is_empty() {
+            Ok(())
+        } else {
+            Err(ResolverError::unused_values(&undefined_values))
+        }
     }
 
     fn declare(
         &mut self,
         binding: &VariableBinding<'a>,
-    ) -> Result<(), ResolverError> {
+    ) -> Result<(), ResolverError<'a>> {
         trace!("Declaring {binding:#?}");
         if let Some(scope) = self.symbol_table.last_mut() {
-            if scope.contains_key(binding.name) {
+            if scope.contains(binding.name) {
                 return Err(ResolverError::VariableAlreadyExists {
                     name: binding.name.to_owned(),
                     span: binding.span,
                 });
             }
-            let _ = scope.insert(binding.name, false);
+            let _ = scope.insert(binding, false);
             trace!("Success");
         }
         Ok(())
     }
 
-    fn define(&mut self, name: &'a str) {
-        trace!("Defining {name}");
+    fn define(&mut self, binding: &VariableBinding<'a>) {
+        trace!("Defining {binding:?}");
         if let Some(scope) = self.symbol_table.last_mut() {
-            let _ = scope.insert(name, true);
+            let _ = scope.insert(binding, true);
             trace!("Success");
         }
     }
@@ -80,7 +123,7 @@ impl<'a> Resolver<'a> {
     fn resolve_statements(
         &mut self,
         statements: &Vec<Statement<'a>>,
-    ) -> Result<LookupMap<'a>, ResolverError> {
+    ) -> Result<LookupMap<'a>, ResolverError<'a>> {
         let mut locals: LookupMap<'a> = HashMap::new();
         for statement in statements {
             locals.extend(self.resolve_statement(statement)?);
@@ -91,7 +134,7 @@ impl<'a> Resolver<'a> {
     fn resolve_statement(
         &mut self,
         statement: &Statement<'a>,
-    ) -> Result<LookupMap<'a>, ResolverError> {
+    ) -> Result<LookupMap<'a>, ResolverError<'a>> {
         match statement {
             Break => Ok(HashMap::new()),
             Declaration {
@@ -103,7 +146,7 @@ impl<'a> Resolver<'a> {
                     || Ok(HashMap::new()),
                     |expr| self.resolve_expression(expr),
                 );
-                self.define(binding.name);
+                self.define(binding);
                 value
             }
             Expression(expr) | Print(expr) => self.resolve_expression(expr),
@@ -112,7 +155,7 @@ impl<'a> Resolver<'a> {
                 trace!("Group: {:?}", self.symbol_table);
                 self.narrow();
                 let result = self.resolve_statements(statements);
-                self.widen();
+                self.widen()?;
                 result
             }
             If {
@@ -149,7 +192,7 @@ impl<'a> Resolver<'a> {
     fn resolve_expression(
         &mut self,
         expr: &Expr<'a>,
-    ) -> Result<LookupMap<'a>, ResolverError> {
+    ) -> Result<LookupMap<'a>, ResolverError<'a>> {
         match &expr.kind {
             ExprKind::Assignment(Assignment { name, expr }) => {
                 let binding = VariableBinding {
@@ -210,15 +253,14 @@ impl<'a> Resolver<'a> {
     fn resolve_function(
         &mut self,
         function: &Function<'a>,
-    ) -> Result<LookupMap<'a>, ResolverError> {
+    ) -> Result<LookupMap<'a>, ResolverError<'a>> {
         self.declare(&function.binding)?;
-        self.define(function.binding.name);
+        self.define(&function.binding);
 
-        trace!("res func");
         self.narrow();
         for token in &function.params {
             self.declare(token)?;
-            self.define(token.name);
+            self.define(token);
         }
         let binding = if let FunctionKind::Lox(lox_body) = &function.body {
             let prior_function_state = self.current_function_state.clone();
@@ -230,7 +272,7 @@ impl<'a> Resolver<'a> {
         } else {
             Ok(HashMap::new())
         };
-        self.widen();
+        self.widen()?;
         binding
     }
 
