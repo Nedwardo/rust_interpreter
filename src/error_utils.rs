@@ -114,7 +114,13 @@ pub fn highlight_line_selection(
     let substr_length = highlight_span.1 - highlight_span.0;
 
     let carets = "^".repeat(substr_length);
-    let pre_spacing = " ".repeat(offset);
+    let pre_spacing: String = line[..offset]
+        .chars()
+        .map(|c| match c {
+            '\t' => '\t',
+            _ => ' ',
+        })
+        .collect();
 
     format!("{line_number:>4} | {line}\n     | {pre_spacing}{carets}")
 }
