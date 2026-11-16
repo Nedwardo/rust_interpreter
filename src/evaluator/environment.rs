@@ -5,7 +5,10 @@ use crate::expressions::Value;
 use crate::token::Span;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt;
 use std::fmt::Debug;
+use std::fmt::Display;
+use std::fmt::Formatter;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
@@ -51,8 +54,25 @@ impl<'a> Frame<'a> {
     }
 }
 
+impl Display for Frame<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "Frame{{")?;
+        for (i, (name, value)) in self.0.borrow().iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{name}: ")?;
+            match value {
+                None => write!(f, "Uninitalised"),
+                Some(value) => write!(f, "{value}"),
+            }?;
+        }
+        write!(f, "}}")
+    }
+}
+
 impl Debug for Frame<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.debug_tuple("Frame").field(&self.0).finish()
     }
 }
@@ -63,6 +83,7 @@ pub struct Environment<'a> {
     globals: Frame<'a>,
 }
 
+#[derive(Debug)]
 pub enum GetError {
     Undefined,
     Uninitalised,
@@ -103,9 +124,6 @@ impl<'a> Environment<'a> {
         binding: &VariableBinding<'a>,
         value: Option<Value<'a>>,
     ) {
-        let frame_size = self.frames.len();
-        trace!("frame size = {frame_size}");
-
         if let Some(frame) = self.frames.last_mut() {
             frame.insert(binding.name, value);
         } else {
@@ -138,15 +156,29 @@ impl<'a> Environment<'a> {
         binding: &VariableBinding<'a>,
     ) -> Result<Value<'a>, GetError> {
         let distance = self.locals.get(binding);
-        trace!("getting: {binding:?}, dist = {distance:?}");
-        trace!("frames: {:?}", self.frames);
         distance.map_or_else(
             || self.globals.get(binding.name),
             |dist| self.frames[self.frames.len() - dist - 1].get(binding.name),
         )
     }
 
+    pub fn get_local(&self, name: &'a str) -> Result<Value<'a>, GetError> {
+        self.frames[self.frames.len() - 1].get(name)
+    }
+
     pub fn add_global(&self, name: &'a str, value: Value<'a>) {
         self.globals.insert(name, Some(value));
+    }
+}
+
+impl Display for Environment<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        writeln!(f, "Env{{")?;
+        writeln!(f, "Globals: {},\nFrames: [", self.globals)?;
+
+        for frame in &self.frames {
+            writeln!(f, "\t{frame},")?;
+        }
+        write!(f, "]}}")
     }
 }

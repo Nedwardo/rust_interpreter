@@ -7,9 +7,12 @@ use crate::{
 pub enum ResolverError<'a> {
     VariableReferencedInInitalisation { name: String, span: Span },
     VariableAlreadyExists { name: String, span: Span },
+    ReturnFromInit(Span),
     ReturnFromTopLevel(Span),
     Group(Vec<Self>),
     UnusedValue(VariableBinding<'a>),
+    ThisOutsideOfClass(Span),
+    ClassCantInheritFromItself(Span),
 }
 
 impl<'a> ResolverError<'a> {
@@ -27,7 +30,10 @@ impl<'a> ResolverError<'a> {
             Self::VariableAlreadyExists { span, .. }
             | Self::VariableReferencedInInitalisation { span, .. }
             | Self::ReturnFromTopLevel(span)
-            | Self::UnusedValue(VariableBinding { span, .. }) => Some(*span),
+            | Self::ReturnFromInit(span)
+            | Self::UnusedValue(VariableBinding { span, .. })
+            | Self::ThisOutsideOfClass(span)
+            | Self::ClassCantInheritFromItself(span) => Some(*span),
             Self::Group(..) => None,
         }
     }
@@ -40,12 +46,21 @@ impl<'a> ResolverError<'a> {
             Self::VariableReferencedInInitalisation { name, .. } => {
                 format!("Variable {name} referenced during initalisation")
             }
+            Self::ReturnFromInit(..) => {
+                "Can't value from initaliser".to_owned()
+            }
             Self::ReturnFromTopLevel(..) => {
                 "Can't return from top-level code".to_owned()
             }
             Self::Group(..) => String::new(),
             Self::UnusedValue(VariableBinding { name, .. }) => {
                 format!("Value {name} is unused")
+            }
+            Self::ThisOutsideOfClass(..) => {
+                "Can't use 'this' outside of a class".to_owned()
+            }
+            Self::ClassCantInheritFromItself(..) => {
+                "A class can't inherit from itself".to_owned()
             }
         }
     }

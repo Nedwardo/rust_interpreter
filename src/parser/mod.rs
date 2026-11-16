@@ -2,10 +2,12 @@ pub mod parser_error;
 use crate::error_utils::StageError;
 use crate::evaluator::environment::VariableBinding;
 use crate::expressions::BinaryOperator as BinaryOp;
+use crate::expressions::Class;
 use crate::expressions::ExprKind;
 use crate::expressions::FunctionKind;
+use crate::expressions::Get;
 use crate::expressions::LogicalOperator as LogicalOp;
-use crate::expressions::{Expr, Function, Statement, Value};
+use crate::expressions::{Expr, FunctionType, Statement, Value};
 use crate::operator_subset;
 use crate::parser::parser_error::ParserError as Error;
 use crate::token::Span;
@@ -40,7 +42,7 @@ pub const fn infix_precedence(token_type: BinaryOp) -> (usize, usize) {
     }
 }
 
-operator_subset!(Keyword, {Var, Fun, Print, If, While, For, Break, Return} );
+operator_subset!(Keyword, {Var, Fun, Print, If, While, For, Break, Return, Class} );
 
 #[derive(Clone)]
 struct TokenCursor {
@@ -216,53 +218,6 @@ impl<'a> Parser<'a> {
         Ok(Statement::Group(members))
     }
 
-    fn function_declaration(
-        &mut self,
-        span: Span,
-    ) -> Result<Statement<'a>, Error> {
-        debug!("Function");
-        let is_named = matches!(self.tokens.peek(), Some(t) if t.token_kind == LT::Identifier);
-        if is_named {
-            let span = self.tokens.consume_identifier_span()?;
-            let binding = VariableBinding::from_span(span, self.source);
-            Ok(Statement::FunctionDeclaration(self.function(binding)?))
-        } else {
-            Ok(Statement::Expression(Expr::lambda(self.function(
-                VariableBinding {
-                    span,
-                    name: "lambda",
-                },
-            )?)))
-        }
-    }
-
-    fn function(
-        &mut self,
-        binding: VariableBinding<'a>,
-    ) -> Result<Function<'a>, Error> {
-        self.tokens.consume_if(&[TT::Keyword(KT::LeftParen)])?;
-
-        let mut params = Vec::new();
-        while let Ok(param) = self.tokens.consume_identifier_span() {
-            params.push(VariableBinding::from_span(param, self.source));
-            if params.len() >= 255 {
-                return Err(Error::too_many_arguments(binding.span, true));
-            }
-            if self.tokens.consume_if(&[TT::Keyword(KT::Comma)]).is_err() {
-                break;
-            }
-        }
-
-        self.tokens.consume_if(&[TT::Keyword(KT::RightParen)])?;
-        self.tokens.consume_if(&[TT::Keyword(KT::LeftBrace)])?;
-        let body = Box::new(self.block()?);
-        Ok(Function {
-            binding,
-            params,
-            body: FunctionKind::Lox(body),
-        })
-    }
-
     fn keyword(&mut self) -> Result<Statement<'a>, Error> {
         debug!("Keyword");
         let Ok((keyword, span)) = self.tokens.peek_token_subset() else {
@@ -273,6 +228,7 @@ impl<'a> Parser<'a> {
         let token = self.tokens.next().expect("Unwrapping a peeked value");
 
         let statement = match keyword {
+            Keyword::Class => self.class_declaration()?,
             Keyword::Var => {
                 let declaration = self.declaration()?;
                 self.tokens.consume_semicolon_or_eof()?;
@@ -298,6 +254,86 @@ impl<'a> Parser<'a> {
         };
 
         Ok(statement)
+    }
+
+    fn class_declaration(&mut self) -> Result<Statement<'a>, Error> {
+        debug!("Class");
+        let span = self.tokens.consume_identifier_span()?;
+        let name = VariableBinding::from_span(span, self.source);
+
+        let superclass =
+            if self.tokens.consume_if(&[TT::Keyword(KT::Less)]).is_ok() {
+                Some(VariableBinding::from_span(
+                    self.tokens.consume_identifier_span()?,
+                    self.source,
+                ))
+            } else {
+                None
+            };
+
+        self.tokens.consume_if(&[TT::Keyword(KT::LeftBrace)])?;
+
+        let mut methods = Vec::new();
+        while matches!(self.tokens.peek(), Some(t) if t.token_kind == LT::Identifier)
+        {
+            debug!("Eating func");
+            let span = self.tokens.consume_identifier_span()?;
+            let binding = VariableBinding::from_span(span, self.source);
+            methods.push(self.function(binding)?);
+        }
+        self.tokens.consume_if(&[TT::Keyword(KT::RightBrace)])?;
+        Ok(Statement::ClassDeclaration(Class {
+            binding: name,
+            superclass,
+            methods,
+        }))
+    }
+
+    fn function_declaration(
+        &mut self,
+        span: Span,
+    ) -> Result<Statement<'a>, Error> {
+        debug!("Function");
+        let is_named = matches!(self.tokens.peek(), Some(t) if t.token_kind == LT::Identifier);
+        if is_named {
+            let span = self.tokens.consume_identifier_span()?;
+            let binding = VariableBinding::from_span(span, self.source);
+            Ok(Statement::FunctionDeclaration(self.function(binding)?))
+        } else {
+            Ok(Statement::Expression(Expr::lambda(self.function(
+                VariableBinding {
+                    span,
+                    name: "lambda",
+                },
+            )?)))
+        }
+    }
+
+    fn function(
+        &mut self,
+        binding: VariableBinding<'a>,
+    ) -> Result<FunctionType<'a>, Error> {
+        self.tokens.consume_if(&[TT::Keyword(KT::LeftParen)])?;
+
+        let mut params = Vec::new();
+        while let Ok(param) = self.tokens.consume_identifier_span() {
+            params.push(VariableBinding::from_span(param, self.source));
+            if params.len() >= 255 {
+                return Err(Error::too_many_arguments(binding.span, true));
+            }
+            if self.tokens.consume_if(&[TT::Keyword(KT::Comma)]).is_err() {
+                break;
+            }
+        }
+
+        self.tokens.consume_if(&[TT::Keyword(KT::RightParen)])?;
+        self.tokens.consume_if(&[TT::Keyword(KT::LeftBrace)])?;
+        let body = Box::new(self.block()?);
+        Ok(FunctionType {
+            binding,
+            params,
+            body: FunctionKind::Lox(body),
+        })
     }
 
     fn declaration(&mut self) -> Result<Statement<'a>, Error> {
@@ -433,13 +469,18 @@ impl<'a> Parser<'a> {
         if let Ok(token) = self.tokens.consume_if(&[TT::Keyword(KT::Equal)]) {
             let rhs = self.expression(current_precedence)?;
 
-            if let ExprKind::Identifier(name) = lhs.kind {
-                return Ok(Expr::assignment(name, Box::new(rhs), token.span));
+            match lhs.kind {
+                ExprKind::Identifier(name) => {
+                    Ok(Expr::assignment(name, Box::new(rhs), token.span))
+                }
+                ExprKind::Get(Get { object, target }) => {
+                    Ok(Expr::set(object, target, Box::new(rhs), token.span))
+                }
+                _ => Err(Error::invalid_assignment_target(token.span)),
             }
-            return Err(Error::invalid_assignment_target(token.span));
+        } else {
+            Ok(lhs)
         }
-
-        Ok(lhs)
     }
 
     pub fn build_logical(
@@ -513,12 +554,20 @@ impl<'a> Parser<'a> {
             return Err(self.tokens.failed_to_match());
         };
 
-        while self
-            .tokens
-            .consume_if(&[TT::Keyword(KT::LeftParen)])
-            .is_ok()
-        {
-            expr = self.build_call(expr)?;
+        loop {
+            if self
+                .tokens
+                .consume_if(&[TT::Keyword(KT::LeftParen)])
+                .is_ok()
+            {
+                expr = self.build_call(expr)?;
+            } else if self.tokens.consume_if(&[TT::Keyword(KT::Dot)]).is_ok() {
+                let span = self.tokens.consume_identifier_span()?;
+                let binding = VariableBinding::from_span(span, self.source);
+                expr = Expr::get(Box::new(expr), binding);
+            } else {
+                break;
+            }
         }
         Ok(expr)
     }
@@ -530,6 +579,8 @@ impl<'a> Parser<'a> {
                 if matches!(token.token_kind, TT::Literal(LT::Identifier)) {
                     let identifier = &self.source[token.span.0..token.span.1];
                     Ok(Expr::identifier(identifier, token.span))
+                } else if matches!(token.token_kind, TT::Keyword(KT::This)) {
+                    Ok(Expr::this(token.span))
                 } else {
                     let value = Value::try_from(token, self.source)
                         .map_err(Error::value_error)?;

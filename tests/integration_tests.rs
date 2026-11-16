@@ -158,4 +158,62 @@ mod integration_tests {
         assert_eq!(output, "global\nglobal\n");
         assert!(result.unwrap().is_none());
     }
+
+    #[test]
+    fn class_method() {
+        let lox_script = "class Bacon { \
+            eat() { \
+                print \"Crunch crunch crunch!\"; \
+            } \
+        } \
+        \
+        Bacon().eat();";
+
+        let mut output = String::new();
+        let result = run(lox_script, &mut output);
+
+        assert_eq!(output, "Crunch crunch crunch!\n");
+        assert!(matches!(result.unwrap().unwrap(), Value::Nil));
+    }
+
+    #[test]
+    fn instance_attribute_setting() {
+        let lox_script = "class Cake { \
+	    taste() { \
+	        var adjective = \"delicious\"; \
+	        print \"The \" + this.flavor + \" cake is \" + adjective + \"!\"; \
+	    } \
+	} \
+	\
+	var cake = Cake(); \
+	cake.flavor = \"German chocolate\"; \
+	cake.taste();";
+
+        let mut output = String::new();
+        let result = run(lox_script, &mut output);
+
+        assert_eq!(output, "The German chocolate cake is delicious!\n");
+        assert!(matches!(result.unwrap().unwrap(), Value::Nil));
+    }
+
+    #[test]
+    fn init_returns_self() {
+        let lox_script = "class Foo { \
+            init() { \
+                print this; \
+            } \
+        } \
+        \
+        var foo = Foo(); \
+        print foo.init();";
+
+        let mut output = String::new();
+        let result = run(lox_script, &mut output);
+
+        assert_eq!(
+            output,
+            "Instance<of Foo>\nInstance<of Foo>\nInstance<of Foo>\n"
+        );
+        assert!(result.unwrap().is_none());
+    }
 }

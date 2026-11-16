@@ -1,7 +1,10 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
 use crate::error_utils::StageError;
 use crate::evaluator::environment::VariableBinding;
-use crate::expressions::Value;
 use crate::expressions::{BinaryOperator, UnaryOperator};
+use crate::expressions::{Instance, Value};
 use crate::token::Span;
 
 const STAGE: &str = "Evaluation";
@@ -30,6 +33,15 @@ pub enum EvaluationError<'a> {
         expected_arguments: usize,
         received_arguments_count: usize,
     },
+    NoninstancePropertyAccess {
+        object: Span,
+        attribute: Span,
+    },
+    UndefinedProperty {
+        instance: Rc<RefCell<Instance<'a>>>,
+        target: VariableBinding<'a>,
+    },
+    SuperClassMustBeClass(Span),
     Return {
         span: Span,
         value: Value<'a>,
@@ -46,7 +58,15 @@ impl EvaluationError<'_> {
             | Self::UninitialisedVariable(VariableBinding { span, .. })
             | Self::Return { span, .. }
             | Self::NonFunctionCalled { span }
-            | Self::IncorrectArgumentCount { span, .. } => Some(*span),
+            | Self::IncorrectArgumentCount { span, .. }
+            | Self::SuperClassMustBeClass(span) => Some(*span),
+            Self::NoninstancePropertyAccess { object, attribute } => {
+                Some((object.0, attribute.1))
+            }
+            Self::UndefinedProperty { target, .. } => {
+                // Include the '.'
+                Some((target.span.0 - 1, target.span.1))
+            }
             Self::Break | Self::GroupErrors(..) => None,
         }
     }
@@ -69,10 +89,10 @@ impl EvaluationError<'_> {
                 format!("Bad operand type for unary {operator}: '{expr_type}'")
             }
             Self::UndefinedVariable(VariableBinding { name, .. }) => {
-                format!("Variable {name} is not defined")
+                format!("Variable '{name}' is not defined")
             }
             Self::UninitialisedVariable(VariableBinding { name, .. }) => {
-                format!("Variable {name} is not initialised")
+                format!("Variable '{name}' is not initialised")
             }
             Self::Return { .. } => "Return used outside of function".to_owned(),
             Self::NonFunctionCalled { .. } => {
@@ -85,6 +105,19 @@ impl EvaluationError<'_> {
             } => format!(
                 "Expected {expected_arguments} arguments, but got {received_arguments_count}."
             ),
+            Self::NoninstancePropertyAccess { .. } => {
+                "Only instances have properties".to_owned()
+            }
+            Self::UndefinedProperty { instance, target } => {
+                format!(
+                    "{} object has no attribute {}",
+                    instance.borrow().class.binding.name,
+                    target.name
+                )
+            }
+            Self::SuperClassMustBeClass(..) => {
+                "Superclass must be a class".to_owned()
+            }
             Self::Break | Self::GroupErrors(..) => String::new(),
         }
     }

@@ -5,8 +5,11 @@ use crate::token_type::KeywordToken as KT;
 use crate::token_type::LiteralToken as LT;
 use crate::token_type::TokenType as TT;
 use crate::token_type::TokenTypeSubset;
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Display, Formatter};
+use std::rc::Rc;
 
 #[derive(Clone, Debug)]
 pub enum Statement<'a> {
@@ -14,7 +17,7 @@ pub enum Statement<'a> {
         binding: VariableBinding<'a>,
         expression: Option<Expr<'a>>,
     },
-    FunctionDeclaration(Function<'a>),
+    FunctionDeclaration(FunctionType<'a>),
     Expression(Expr<'a>),
     Print(Expr<'a>),
     Group(Vec<Self>),
@@ -31,6 +34,7 @@ pub enum Statement<'a> {
         span: Span,
         value: Option<Expr<'a>>,
     },
+    ClassDeclaration(Class<'a>),
     Break,
 }
 
@@ -80,15 +84,17 @@ pub enum ExprKind<'a> {
     Assignment(Assignment<'a>),
     Logical(Logical<'a>),
     Call(Call<'a>),
-    Lambda(Function<'a>),
+    Get(Get<'a>),
+    Set(Set<'a>),
+    Lambda(FunctionType<'a>),
+    This(VariableBinding<'a>),
 }
 
 #[derive(Clone, Debug)]
 pub enum Value<'a> {
-    Function {
-        declaration: Function<'a>,
-        closure: Frame<'a>,
-    },
+    Function(FunctionValue<'a>),
+    Class(Class<'a>),
+    Instance(Rc<RefCell<Instance<'a>>>),
     String(String),
     Number(f64),
     Boolean(bool),
@@ -134,7 +140,20 @@ pub struct Call<'a> {
 }
 
 #[derive(Clone, Debug)]
-pub struct Function<'a> {
+pub struct Get<'a> {
+    pub object: Box<Expr<'a>>,
+    pub target: VariableBinding<'a>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Set<'a> {
+    pub object: Box<Expr<'a>>,
+    pub target: VariableBinding<'a>,
+    pub value: Box<Expr<'a>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct FunctionType<'a> {
     pub binding: VariableBinding<'a>,
     pub body: FunctionKind<'a>,
     pub params: Vec<VariableBinding<'a>>,
@@ -144,6 +163,122 @@ pub struct Function<'a> {
 pub enum FunctionKind<'a> {
     Lox(Box<Statement<'a>>),
     Rust(fn(Vec<Value<'a>>) -> Value<'a>),
+    Constructor(Class<'a>),
+    CustomConstructor(Box<Statement<'a>>),
+}
+
+#[derive(Clone)]
+pub struct FunctionValue<'a> {
+    pub function: FunctionType<'a>,
+    pub closure: Frame<'a>,
+}
+
+impl<'a> FunctionValue<'a> {
+    #[must_use]
+    pub fn bind(&self, instance: Rc<RefCell<Instance<'a>>>) -> Self {
+        let closure = self.closure.clone();
+        closure.insert("this", Some(Value::Instance(instance)));
+        Self {
+            function: self.function.clone(),
+            closure,
+        }
+    }
+}
+
+impl fmt::Debug for FunctionValue<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FunctionValue")
+            .field("function", &self.function)
+            .field("closure", &"{closure}")
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Class<'a> {
+    pub superclass: Option<VariableBinding<'a>>,
+    pub binding: VariableBinding<'a>,
+    pub methods: Vec<FunctionType<'a>>,
+}
+
+impl<'a> Class<'a> {
+    #[must_use]
+    pub fn constructor(&self) -> FunctionValue<'a> {
+        FunctionValue {
+            function: FunctionType {
+                binding: VariableBinding {
+                    span: (0, 0),
+                    name: self.binding.name,
+                },
+                body: FunctionKind::Constructor(self.clone()),
+                params: self
+                    .fields()
+                    .get("init")
+                    .map_or_else(Vec::new, |init| init.params.clone()),
+            },
+            closure: Frame::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn fields(&self) -> HashMap<&'a str, &FunctionType<'a>> {
+        self.methods
+            .iter()
+            .map(|f| (f.binding.name, f))
+            .collect::<HashMap<_, _>>()
+    }
+
+    #[must_use]
+    pub const fn this_binding(&self) -> VariableBinding<'a> {
+        VariableBinding {
+            span: self.binding.span,
+            name: "this",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Instance<'a> {
+    pub class: Class<'a>,
+    pub fields: HashMap<&'a str, Value<'a>>,
+}
+
+impl<'a> Instance<'a> {
+    #[must_use]
+    pub fn new(class: Class<'a>, superclass: &Option<Class<'a>>) -> Self {
+        let fields = superclass
+            .iter()
+            .flat_map(|superclass| superclass.fields())
+            .chain(class.fields())
+            .map(|(name, field)| {
+                if name == "init"
+                    && let FunctionKind::Lox(body) = &field.body
+                {
+                    (
+                        name,
+                        Value::from(FunctionType {
+                            binding: field.binding.clone(),
+                            body: FunctionKind::CustomConstructor(body.clone()),
+                            params: field.params.clone(),
+                        }),
+                    )
+                } else {
+                    (name, Value::from(field.clone()))
+                }
+            })
+            .collect::<HashMap<_, _>>();
+
+        Self { class, fields }
+    }
+
+    #[must_use]
+    pub fn get(&self, target: &'a str) -> Option<&Value<'a>> {
+        self.fields.get(target)
+    }
+
+    pub fn set(&mut self, target: &'a str, value: Value<'a>) {
+        self.fields.insert(target, value);
+    }
 }
 
 operator_subset!(UnaryOperator, {Minus, Bang});
@@ -256,10 +391,46 @@ impl<'a> Expr<'a> {
     }
 
     #[must_use]
-    pub const fn lambda(function: Function<'a>) -> Self {
+    pub const fn lambda(function: FunctionType<'a>) -> Self {
         Expr {
             span: function.binding.span,
             kind: ExprKind::Lambda(function),
+        }
+    }
+
+    #[must_use]
+    pub const fn get(object: Box<Self>, binding: VariableBinding<'a>) -> Self {
+        Expr {
+            span: object.span,
+            kind: ExprKind::Get(Get {
+                object,
+                target: binding,
+            }),
+        }
+    }
+
+    #[must_use]
+    pub const fn set(
+        object: Box<Self>,
+        target: VariableBinding<'a>,
+        value: Box<Self>,
+        span: Span,
+    ) -> Self {
+        Expr {
+            span,
+            kind: ExprKind::Set(Set {
+                object,
+                target,
+                value,
+            }),
+        }
+    }
+
+    #[must_use]
+    pub const fn this(span: Span) -> Self {
+        Expr {
+            span,
+            kind: ExprKind::This(VariableBinding { span, name: "this" }),
         }
     }
 }
@@ -267,15 +438,26 @@ impl<'a> Expr<'a> {
 impl Display for Value<'_> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            Self::Function {
-                declaration:
-                    Function {
-                        binding: VariableBinding { name, .. },
-                        ..
-                    },
+            Self::String(value) => {
+                write!(f, "{value}")
+            }
+            Self::Number(value) => write!(f, "{value}"),
+            Self::Boolean(value) => write!(f, "{value}"),
+            Self::Nil => write!(f, "nil"),
+            Self::Function(FunctionValue {
+                function: FunctionType { binding, .. },
                 ..
-            } => write!(f, "<fn {name}>"),
-            _ => write!(f, "{}", self.cast_to_string()),
+            }) => write!(f, "Function<{}>", binding.name),
+            Self::Class(Class { binding, .. }) => {
+                write!(f, "Class<{}>", binding.name)
+            }
+            Self::Instance(instance) => {
+                write!(
+                    f,
+                    "Instance<of {}>",
+                    instance.borrow().class.binding.name
+                )
+            }
         }
     }
 }
@@ -300,6 +482,8 @@ impl<'a> Value<'a> {
             Self::Boolean(..) => "Boolean",
             Self::Nil => "nil",
             Self::Function { .. } => "Function",
+            Self::Class { .. } => "Class",
+            Self::Instance(..) => "Instance",
         }
     }
 
@@ -310,7 +494,11 @@ impl<'a> Value<'a> {
             Self::Number(value) => format!("{value}"),
             Self::Boolean(value) => format!("{value}"),
             Self::Nil => "nil".to_owned(),
-            Self::Function { .. } => "Function".to_owned(),
+            Self::Function(..) => "Function".to_owned(),
+            Self::Class(Class { binding, .. }) => binding.name.to_owned(),
+            Self::Instance(instance) => {
+                format!("{} instance", instance.borrow().class.binding.name)
+            }
         }
     }
 
@@ -336,5 +524,14 @@ impl<'a> Value<'a> {
             TT::Keyword(KT::Nil) => Ok(Self::Nil),
             _ => Err(ValueError::NotAValue(token.span)),
         }
+    }
+}
+
+impl<'a> From<FunctionType<'a>> for Value<'a> {
+    fn from(value: FunctionType<'a>) -> Self {
+        Value::Function(FunctionValue {
+            function: value,
+            closure: Frame::new(),
+        })
     }
 }

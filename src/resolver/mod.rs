@@ -3,16 +3,16 @@ use log::trace;
 
 use crate::error_utils::StageError;
 use crate::evaluator::environment::{LookupMap, VariableBinding};
-use crate::resolver::resolver_error::ResolverError;
+use crate::resolver::resolver_error::ResolverError as Error;
 use std::collections::HashMap;
 
 use crate::expressions::Statement::{
-    Break, Declaration, Expression, FunctionDeclaration, Group, If, Print,
-    Return, While,
+    Break, ClassDeclaration, Declaration, Expression, FunctionDeclaration,
+    Group, If, Print, Return, While,
 };
 use crate::expressions::{
-    Assignment, Binary, Call, Expr, ExprKind, Function, FunctionKind, Logical,
-    Statement, Unary,
+    Assignment, Binary, Call, Class, Expr, ExprKind, FunctionKind,
+    FunctionType, Get, Logical, Set, Statement, Unary,
 };
 
 #[derive(Debug)]
@@ -50,27 +50,41 @@ impl<'a> Scope<'a> {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-enum FunctionType {
+enum FunctionState {
+    None,
     Function,
+    Method,
+    Initializer,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum ClassState {
+    None,
+    Class,
 }
 
 pub struct Resolver<'a> {
     symbol_table: Vec<Scope<'a>>,
-    current_function_state: Option<FunctionType>,
+    current_function_state: FunctionState,
+    current_class_state: ClassState,
 }
 
 pub fn resolve<'a>(
     statements: &Vec<Statement<'a>>,
 ) -> Result<LookupMap<'a>, StageError> {
     let mut resolver = Resolver::new();
-    Ok(resolver.resolve_statements(statements)?)
+    let lm = resolver.resolve_statements(statements)?;
+    trace!("Ending resolve!!!\n");
+    trace!("{lm:?}");
+    Ok(lm)
 }
 
 impl<'a> Resolver<'a> {
     pub const fn new() -> Self {
         Self {
             symbol_table: Vec::new(),
-            current_function_state: None,
+            current_function_state: FunctionState::None,
+            current_class_state: ClassState::None,
         }
     }
 
@@ -79,7 +93,7 @@ impl<'a> Resolver<'a> {
         self.symbol_table.push(Scope::new());
     }
 
-    fn widen(&mut self) -> Result<(), ResolverError<'a>> {
+    fn widen(&mut self) -> Result<(), Error<'a>> {
         let symbols = self
             .symbol_table
             .pop()
@@ -90,18 +104,19 @@ impl<'a> Resolver<'a> {
         if undefined_values.is_empty() {
             Ok(())
         } else {
-            Err(ResolverError::unused_values(&undefined_values))
+            Err(Error::unused_values(&undefined_values))
         }
     }
 
     fn declare(
         &mut self,
         binding: &VariableBinding<'a>,
-    ) -> Result<(), ResolverError<'a>> {
+    ) -> Result<(), Error<'a>> {
         trace!("Declaring {binding:#?}");
+
         if let Some(scope) = self.symbol_table.last_mut() {
             if scope.contains(binding.name) {
-                return Err(ResolverError::VariableAlreadyExists {
+                return Err(Error::VariableAlreadyExists {
                     name: binding.name.to_owned(),
                     span: binding.span,
                 });
@@ -123,7 +138,7 @@ impl<'a> Resolver<'a> {
     fn resolve_statements(
         &mut self,
         statements: &Vec<Statement<'a>>,
-    ) -> Result<LookupMap<'a>, ResolverError<'a>> {
+    ) -> Result<LookupMap<'a>, Error<'a>> {
         let mut locals: LookupMap<'a> = HashMap::new();
         for statement in statements {
             locals.extend(self.resolve_statement(statement)?);
@@ -134,7 +149,7 @@ impl<'a> Resolver<'a> {
     fn resolve_statement(
         &mut self,
         statement: &Statement<'a>,
-    ) -> Result<LookupMap<'a>, ResolverError<'a>> {
+    ) -> Result<LookupMap<'a>, Error<'a>> {
         match statement {
             Break => Ok(HashMap::new()),
             Declaration {
@@ -150,7 +165,9 @@ impl<'a> Resolver<'a> {
                 value
             }
             Expression(expr) | Print(expr) => self.resolve_expression(expr),
-            FunctionDeclaration(function) => self.resolve_function(function),
+            FunctionDeclaration(function) => {
+                self.resolve_function(function, FunctionState::Function)
+            }
             Group(statements) => {
                 trace!("Group: {:?}", self.symbol_table);
                 self.narrow();
@@ -171,28 +188,32 @@ impl<'a> Resolver<'a> {
                 Ok(locals)
             }
 
-            Return { span, value } => {
-                if self.current_function_state == Some(FunctionType::Function) {
+            Return { span, value } => match self.current_function_state {
+                FunctionState::Function | FunctionState::Method => {
                     value.as_ref().map_or_else(
                         || Ok(HashMap::new()),
                         |expr| self.resolve_expression(expr),
                     )
-                } else {
-                    Err(ResolverError::ReturnFromTopLevel(*span))
                 }
-            }
+                FunctionState::Initializer if value.is_none() => {
+                    Ok(HashMap::new())
+                }
+                FunctionState::Initializer => Err(Error::ReturnFromInit(*span)),
+                FunctionState::None => Err(Error::ReturnFromTopLevel(*span)),
+            },
             While { condition, body } => {
                 let mut locals = self.resolve_expression(condition)?;
                 locals.extend(self.resolve_statement(body)?);
                 Ok(locals)
             }
+            ClassDeclaration(class) => self.resolve_class(class),
         }
     }
 
     fn resolve_expression(
         &mut self,
         expr: &Expr<'a>,
-    ) -> Result<LookupMap<'a>, ResolverError<'a>> {
+    ) -> Result<LookupMap<'a>, Error<'a>> {
         match &expr.kind {
             ExprKind::Assignment(Assignment { name, expr }) => {
                 let binding = VariableBinding {
@@ -224,12 +245,10 @@ impl<'a> Resolver<'a> {
                 if self.symbol_table.last().map(|scope| scope.get(name))
                     == Some(Some(&false))
                 {
-                    return Err(
-                        ResolverError::VariableReferencedInInitalisation {
-                            name: name.to_string(),
-                            span: expr.span,
-                        },
-                    );
+                    return Err(Error::VariableReferencedInInitalisation {
+                        name: name.to_string(),
+                        span: expr.span,
+                    });
                 }
                 let binding = VariableBinding {
                     span: expr.span,
@@ -242,18 +261,39 @@ impl<'a> Resolver<'a> {
                         HashMap::from([(binding, depth)])
                     }))
             }
-            ExprKind::Lambda(function) => self.resolve_function(function),
+            ExprKind::Lambda(function) => {
+                self.resolve_function(function, FunctionState::Function)
+            }
             ExprKind::Unary(Unary { expr, .. }) => {
                 self.resolve_expression(expr)
             }
             ExprKind::Literal(_) => Ok(HashMap::new()),
+            ExprKind::Get(Get { object, .. }) => {
+                self.resolve_expression(object)
+            }
+            ExprKind::Set(Set { object, value, .. }) => {
+                self.resolve_expression(value)?;
+                self.resolve_expression(object)
+            }
+            ExprKind::This(binding) => {
+                if matches!(self.current_class_state, ClassState::Class) {
+                    Ok(self
+                        .resolve_local(binding.name)
+                        .map_or_else(HashMap::new, |depth| {
+                            HashMap::from([(binding.clone(), depth)])
+                        }))
+                } else {
+                    Err(Error::ThisOutsideOfClass(binding.span))
+                }
+            }
         }
     }
 
     fn resolve_function(
         &mut self,
-        function: &Function<'a>,
-    ) -> Result<LookupMap<'a>, ResolverError<'a>> {
+        function: &FunctionType<'a>,
+        function_kind: FunctionState,
+    ) -> Result<LookupMap<'a>, Error<'a>> {
         self.declare(&function.binding)?;
         self.define(&function.binding);
 
@@ -264,7 +304,7 @@ impl<'a> Resolver<'a> {
         }
         let binding = if let FunctionKind::Lox(lox_body) = &function.body {
             let prior_function_state = self.current_function_state.clone();
-            self.current_function_state = Some(FunctionType::Function);
+            self.current_function_state = function_kind;
 
             let lookup_map = self.resolve_statement(lox_body);
             self.current_function_state = prior_function_state;
@@ -274,6 +314,48 @@ impl<'a> Resolver<'a> {
         };
         self.widen()?;
         binding
+    }
+
+    fn resolve_class(
+        &mut self,
+        class: &Class<'a>,
+    ) -> Result<LookupMap<'a>, Error<'a>> {
+        let enclosing_class_state = self.current_class_state;
+        self.current_class_state = ClassState::Class;
+
+        self.declare(&class.binding)?;
+        self.define(&class.binding);
+
+        let mut fields = HashMap::new();
+
+        if let Some(superclass) = &class.superclass {
+            if superclass.name == class.binding.name {
+                return Err(Error::ClassCantInheritFromItself(
+                    class.binding.span,
+                ));
+            }
+            fields.extend(self.resolve_expression(&Expr {
+                span: superclass.span,
+                kind: ExprKind::Identifier(superclass.name),
+            })?);
+        }
+
+        self.narrow();
+        self.define(&class.this_binding());
+
+        for method in &class.methods {
+            let function_state = if method.binding.name == "init" {
+                FunctionState::Initializer
+            } else {
+                FunctionState::Method
+            };
+            fields.extend(self.resolve_function(method, function_state)?);
+        }
+        self.widen()?;
+
+        self.current_class_state = enclosing_class_state;
+
+        Ok(fields)
     }
 
     fn resolve_local(&self, name: &'a str) -> Option<usize> {
