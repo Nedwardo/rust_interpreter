@@ -8,7 +8,7 @@ use core::str::Chars;
 use log::debug;
 use scanner_error::ScannerError as Error;
 
-pub fn scan(source: &'_ str) -> Result<Vec<Token>, Vec<Error>> {
+pub fn scan(source: &str) -> Result<Vec<Token>, Vec<Error>> {
     Scanner::new(source).scan_tokens()
 }
 

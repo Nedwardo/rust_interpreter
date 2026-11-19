@@ -27,7 +27,7 @@ pub fn define_globals(environment: &Environment<'_>) {
 }
 
 #[allow(clippy::cast_precision_loss, clippy::unnecessary_wraps)]
-fn clock(_: Vec<Value<'_>>) -> Value<'_> {
+fn clock(_: Vec<Value>) -> Value {
     let unix_time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("Time should go forwards");

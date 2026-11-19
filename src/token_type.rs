@@ -80,6 +80,18 @@ impl TokenType {
     }
 }
 
+impl From<KeywordToken> for TokenType {
+    fn from(value: KeywordToken) -> Self {
+        Self::Keyword(value)
+    }
+}
+
+impl From<LiteralToken> for TokenType {
+    fn from(value: LiteralToken) -> Self {
+        Self::Literal(value)
+    }
+}
+
 impl PartialEq<KeywordToken> for TokenType {
     fn eq(&self, other: &KeywordToken) -> bool {
         if let Self::Keyword(kt) = self

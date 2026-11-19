@@ -3,6 +3,7 @@ use crate::{
     token::Span,
 };
 
+#[must_use]
 #[derive(Clone)]
 pub enum ResolverError<'a> {
     VariableReferencedInInitalisation { name: String, span: Span },

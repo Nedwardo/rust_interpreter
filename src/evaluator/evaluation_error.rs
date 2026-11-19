@@ -3,12 +3,13 @@ use std::rc::Rc;
 
 use crate::error_utils::StageError;
 use crate::evaluator::environment::VariableBinding;
-use crate::expressions::{BinaryOperator, UnaryOperator};
+use crate::expressions::{BinaryOperator, Class, UnaryOperator};
 use crate::expressions::{Instance, Value};
 use crate::token::Span;
 
 const STAGE: &str = "Evaluation";
 
+#[must_use]
 #[derive(Debug, Clone)]
 pub enum EvaluationError<'a> {
     UnsupportedBinaryOperand {
@@ -37,8 +38,12 @@ pub enum EvaluationError<'a> {
         object: Span,
         attribute: Span,
     },
-    UndefinedProperty {
+    UndefinedInstanceProperty {
         instance: Rc<RefCell<Instance<'a>>>,
+        target: VariableBinding<'a>,
+    },
+    UndefinedClassProperty {
+        class: Class<'a>,
         target: VariableBinding<'a>,
     },
     SuperClassMustBeClass(Span),
@@ -63,7 +68,8 @@ impl EvaluationError<'_> {
             Self::NoninstancePropertyAccess { object, attribute } => {
                 Some((object.0, attribute.1))
             }
-            Self::UndefinedProperty { target, .. } => {
+            Self::UndefinedInstanceProperty { target, .. }
+            | Self::UndefinedClassProperty { target, .. } => {
                 // Include the '.'
                 Some((target.span.0 - 1, target.span.1))
             }
@@ -108,11 +114,17 @@ impl EvaluationError<'_> {
             Self::NoninstancePropertyAccess { .. } => {
                 "Only instances have properties".to_owned()
             }
-            Self::UndefinedProperty { instance, target } => {
+            Self::UndefinedInstanceProperty { instance, target } => {
                 format!(
                     "{} object has no attribute {}",
                     instance.borrow().class.binding.name,
                     target.name
+                )
+            }
+            Self::UndefinedClassProperty { class, target } => {
+                format!(
+                    "{} class has no attribute {}",
+                    class.binding.name, target.name
                 )
             }
             Self::SuperClassMustBeClass(..) => {

@@ -1,5 +1,9 @@
 use log::trace;
 
+use crate::evaluator::evaluation_error::EvaluationError;
+use crate::evaluator::evaluation_error::EvaluationError::{
+    UndefinedVariable, UninitialisedVariable,
+};
 use crate::evaluator::globals::define_globals;
 use crate::expressions::Value;
 use crate::token::Span;
@@ -154,12 +158,21 @@ impl<'a> Environment<'a> {
     pub fn get(
         &self,
         binding: &VariableBinding<'a>,
-    ) -> Result<Value<'a>, GetError> {
+    ) -> Result<Value<'a>, EvaluationError<'a>> {
         let distance = self.locals.get(binding);
-        distance.map_or_else(
-            || self.globals.get(binding.name),
-            |dist| self.frames[self.frames.len() - dist - 1].get(binding.name),
-        )
+        distance
+            .map_or_else(
+                || self.globals.get(binding.name),
+                |dist| {
+                    self.frames[self.frames.len() - dist - 1].get(binding.name)
+                },
+            )
+            .map_err(|err| match err {
+                GetError::Undefined => UndefinedVariable(binding.clone()),
+                GetError::Uninitalised => {
+                    UninitialisedVariable(binding.clone())
+                }
+            })
     }
 
     pub fn get_local(&self, name: &'a str) -> Result<Value<'a>, GetError> {

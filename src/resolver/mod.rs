@@ -40,11 +40,11 @@ impl<'a> Scope<'a> {
 
     fn insert(
         &mut self,
-        binding: &VariableBinding<'a>,
+        binding: VariableBinding<'a>,
         value: bool,
     ) -> Option<bool> {
         self.0
-            .insert(binding.name, (value, binding.clone()))
+            .insert(binding.name, (value, binding))
             .map(|(v, ..)| v)
     }
 }
@@ -110,7 +110,7 @@ impl<'a> Resolver<'a> {
 
     fn declare(
         &mut self,
-        binding: &VariableBinding<'a>,
+        binding: VariableBinding<'a>,
     ) -> Result<(), Error<'a>> {
         trace!("Declaring {binding:#?}");
 
@@ -127,7 +127,7 @@ impl<'a> Resolver<'a> {
         Ok(())
     }
 
-    fn define(&mut self, binding: &VariableBinding<'a>) {
+    fn define(&mut self, binding: VariableBinding<'a>) {
         trace!("Defining {binding:?}");
         if let Some(scope) = self.symbol_table.last_mut() {
             let _ = scope.insert(binding, true);
@@ -156,12 +156,12 @@ impl<'a> Resolver<'a> {
                 binding,
                 expression,
             } => {
-                self.declare(binding)?;
+                self.declare(binding.clone())?;
                 let value = expression.as_ref().map_or_else(
                     || Ok(HashMap::new()),
                     |expr| self.resolve_expression(expr),
                 );
-                self.define(binding);
+                self.define(binding.clone());
                 value
             }
             Expression(expr) | Print(expr) => self.resolve_expression(expr),
@@ -254,7 +254,6 @@ impl<'a> Resolver<'a> {
                     span: expr.span,
                     name,
                 };
-                trace!("Resolving local: {binding:?}");
                 Ok(self
                     .resolve_local(name)
                     .map_or_else(HashMap::new, |depth| {
@@ -286,6 +285,25 @@ impl<'a> Resolver<'a> {
                     Err(Error::ThisOutsideOfClass(binding.span))
                 }
             }
+            ExprKind::Super { binding, .. } => {
+                let mut lookup_map = self
+                    .resolve_local(binding.name)
+                    .map_or_else(HashMap::new, |depth| {
+                        HashMap::from([(binding.clone(), depth)])
+                    });
+
+                let binding = VariableBinding {
+                    span: binding.span,
+                    name: "this",
+                };
+                let depth = self
+                    .resolve_local("this")
+                    .expect("If super is defined, this must be too");
+
+                lookup_map.insert(binding, depth);
+
+                Ok(lookup_map)
+            }
         }
     }
 
@@ -294,13 +312,13 @@ impl<'a> Resolver<'a> {
         function: &FunctionType<'a>,
         function_kind: FunctionState,
     ) -> Result<LookupMap<'a>, Error<'a>> {
-        self.declare(&function.binding)?;
-        self.define(&function.binding);
+        self.declare(function.binding.clone())?;
+        self.define(function.binding.clone());
 
         self.narrow();
         for token in &function.params {
-            self.declare(token)?;
-            self.define(token);
+            self.declare(token.clone())?;
+            self.define(token.clone());
         }
         let binding = if let FunctionKind::Lox(lox_body) = &function.body {
             let prior_function_state = self.current_function_state.clone();
@@ -323,12 +341,12 @@ impl<'a> Resolver<'a> {
         let enclosing_class_state = self.current_class_state;
         self.current_class_state = ClassState::Class;
 
-        self.declare(&class.binding)?;
-        self.define(&class.binding);
+        self.declare(class.binding.clone())?;
+        self.define(class.binding.clone());
 
         let mut fields = HashMap::new();
 
-        if let Some(superclass) = &class.superclass {
+        if let Some(superclass) = &class.superclass_binding {
             if superclass.name == class.binding.name {
                 return Err(Error::ClassCantInheritFromItself(
                     class.binding.span,
@@ -338,10 +356,16 @@ impl<'a> Resolver<'a> {
                 span: superclass.span,
                 kind: ExprKind::Identifier(superclass.name),
             })?);
+
+            self.narrow();
+            self.define(VariableBinding {
+                name: "super",
+                span: superclass.span,
+            });
         }
 
         self.narrow();
-        self.define(&class.this_binding());
+        self.define(class.this_binding());
 
         for method in &class.methods {
             let function_state = if method.binding.name == "init" {
@@ -352,6 +376,9 @@ impl<'a> Resolver<'a> {
             fields.extend(self.resolve_function(method, function_state)?);
         }
         self.widen()?;
+        if class.superclass_binding.is_some() {
+            self.widen()?;
+        }
 
         self.current_class_state = enclosing_class_state;
 

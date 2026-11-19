@@ -1,5 +1,4 @@
 use crate::error_utils::StageError;
-use crate::expressions::ValueError;
 use crate::token::{Span, Token};
 use crate::token_type::TokenType;
 
@@ -9,11 +8,11 @@ pub struct ParserError {
     pub synchronise: bool,
 }
 
+#[must_use]
 #[derive(Debug, Clone)]
 pub enum ParserErrorKind {
     UnexpectedToken {
-        span: Span,
-        token_type: TokenType,
+        token: Token,
         expected_token_types: Vec<TokenType>,
     },
     InvalidAssignmentTarget(Span),
@@ -21,15 +20,14 @@ pub enum ParserErrorKind {
     UnexpectedEOF(&'static str),
     TooManyArguments(Span),
     BlockError(Vec<ParserError>),
-    ValueError(ValueError),
+    NotANumber(Span),
 }
 
 impl ParserError {
-    pub fn unexpected_token(token: &Token, token_types: &[TokenType]) -> Self {
+    pub fn unexpected_token(token: Token, token_types: &[TokenType]) -> Self {
         Self {
             kind: ParserErrorKind::UnexpectedToken {
-                span: token.span,
-                token_type: token.token_kind,
+                token,
                 expected_token_types: token_types.to_owned(),
             },
             synchronise: true,
@@ -73,9 +71,9 @@ impl ParserError {
         }
     }
 
-    pub const fn value_error(error: ValueError) -> Self {
+    pub const fn not_a_number(span: Span) -> Self {
         Self {
-            kind: ParserErrorKind::ValueError(error),
+            kind: ParserErrorKind::NotANumber(span),
             synchronise: false,
         }
     }
@@ -84,12 +82,13 @@ impl ParserError {
 impl ParserErrorKind {
     const fn span(&self) -> Option<Span> {
         match self {
-            Self::UnexpectedToken { span, .. }
+            Self::UnexpectedToken {
+                token: Token { span, .. },
+                ..
+            }
             | Self::InvalidAssignmentTarget(span)
             | Self::TooManyArguments(span)
-            | Self::ValueError(
-                ValueError::NotAValue(span) | ValueError::NotANumber(span),
-            ) => Some(*span),
+            | Self::NotANumber(span) => Some(*span),
 
             Self::BlockError(..)
             | Self::UnexpectedEOF(..)
@@ -100,11 +99,11 @@ impl ParserErrorKind {
     fn message(&self) -> String {
         match self {
             Self::UnexpectedToken {
-                token_type,
+                token: Token { token_kind, .. },
                 expected_token_types,
                 ..
             } => format!(
-                "Unexpected Token: Expected one of: {}, found {token_type}",
+                "Unexpected Token: Expected one of: {}, found {token_kind}",
                 expected_token_types
                     .iter()
                     .map(|c| format!("'{c}'"))
@@ -124,12 +123,7 @@ impl ParserErrorKind {
                 "Can't have more than 255 arguments.".to_owned()
             }
             Self::BlockError(..) => "Error while generating block".to_owned(),
-            Self::ValueError(ValueError::NotAValue(..)) => {
-                "Expected a value".to_owned()
-            }
-            Self::ValueError(ValueError::NotANumber(..)) => {
-                "Value is not a number".to_owned()
-            }
+            Self::NotANumber(..) => "Value is not a number".to_owned(),
         }
     }
 

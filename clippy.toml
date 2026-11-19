@@ -1,0 +1,3 @@
+large-error-ignored = [
+	"interpreter::evaluator::evaluation_error::EvaluationError"
+]

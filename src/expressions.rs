@@ -1,12 +1,14 @@
-use crate::evaluator::environment::{Frame, VariableBinding};
+use crate::evaluator::environment::{Environment, Frame, VariableBinding};
+use crate::evaluator::evaluation_error::EvaluationError;
 use crate::operator_subset;
-use crate::token::{Span, Token};
+use crate::token::Span;
 use crate::token_type::KeywordToken as KT;
 use crate::token_type::LiteralToken as LT;
 use crate::token_type::TokenType as TT;
 use crate::token_type::TokenTypeSubset;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::convert::Into;
 use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
@@ -88,6 +90,10 @@ pub enum ExprKind<'a> {
     Set(Set<'a>),
     Lambda(FunctionType<'a>),
     This(VariableBinding<'a>),
+    Super {
+        binding: VariableBinding<'a>,
+        target: VariableBinding<'a>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -99,12 +105,6 @@ pub enum Value<'a> {
     Number(f64),
     Boolean(bool),
     Nil,
-}
-
-#[derive(Clone, Debug)]
-pub enum ValueError {
-    NotANumber(Span),
-    NotAValue(Span),
 }
 
 #[derive(Clone, Debug)]
@@ -159,6 +159,21 @@ pub struct FunctionType<'a> {
     pub params: Vec<VariableBinding<'a>>,
 }
 
+impl<'a> FunctionType<'a> {
+    pub fn bound(
+        &self,
+        instance: Rc<RefCell<Instance<'a>>>,
+    ) -> FunctionValue<'a> {
+        let closure = Frame::new();
+
+        closure.insert("this", Some(Value::Instance(instance)));
+        FunctionValue {
+            function: self.clone(),
+            closure,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum FunctionKind<'a> {
     Lox(Box<Statement<'a>>),
@@ -174,6 +189,14 @@ pub struct FunctionValue<'a> {
 }
 
 impl<'a> FunctionValue<'a> {
+    #[must_use]
+    pub fn new(function: FunctionType<'a>) -> Self {
+        Self {
+            function,
+            closure: Frame::new(),
+        }
+    }
+
     #[must_use]
     pub fn bind(&self, instance: Rc<RefCell<Instance<'a>>>) -> Self {
         let closure = self.closure.clone();
@@ -196,36 +219,99 @@ impl fmt::Debug for FunctionValue<'_> {
 
 #[derive(Clone, Debug)]
 pub struct Class<'a> {
-    pub superclass: Option<VariableBinding<'a>>,
     pub binding: VariableBinding<'a>,
+    pub superclass_binding: Option<VariableBinding<'a>>,
     pub methods: Vec<FunctionType<'a>>,
+    methods_lookup: HashMap<&'a str, usize>,
 }
 
 impl<'a> Class<'a> {
     #[must_use]
-    pub fn constructor(&self) -> FunctionValue<'a> {
-        FunctionValue {
-            function: FunctionType {
-                binding: VariableBinding {
-                    span: (0, 0),
-                    name: self.binding.name,
-                },
-                body: FunctionKind::Constructor(self.clone()),
-                params: self
-                    .fields()
-                    .get("init")
-                    .map_or_else(Vec::new, |init| init.params.clone()),
-            },
-            closure: Frame::new(),
+    pub fn new(
+        binding: VariableBinding<'a>,
+        superclass_binding: Option<VariableBinding<'a>>,
+        mut methods: Vec<FunctionType<'a>>,
+    ) -> Self {
+        for func in &mut methods {
+            if func.binding.name == "init"
+                && let FunctionKind::Lox(body) = &func.body
+            {
+                func.body = FunctionKind::CustomConstructor(body.clone());
+            }
+        }
+
+        let methods_lookup = methods
+            .iter()
+            .enumerate()
+            .map(|(index, func)| (func.binding.name, index))
+            .collect::<HashMap<_, _>>();
+
+        Self {
+            binding,
+            superclass_binding,
+            methods,
+            methods_lookup,
         }
     }
+    /// # Errors
+    ///
+    /// Will error if any of the class's superclasses are not classes, uninitalised or undefined
+    pub fn constructor(
+        &self,
+        env: &Environment<'a>,
+    ) -> Result<FunctionValue<'a>, EvaluationError<'a>> {
+        let binding = VariableBinding {
+            span: (0, 0),
+            name: self.binding.name,
+        };
 
-    #[must_use]
-    pub fn fields(&self) -> HashMap<&'a str, &FunctionType<'a>> {
-        self.methods
-            .iter()
-            .map(|f| (f.binding.name, f))
-            .collect::<HashMap<_, _>>()
+        let init = if let Some(mut init) = self.find_method("init", env)? {
+            init.binding = binding;
+            init
+        } else {
+            FunctionType {
+                binding,
+                body: FunctionKind::Constructor(self.clone()),
+                params: Vec::new(),
+            }
+        };
+
+        Ok(FunctionValue {
+            function: init,
+            closure: Frame::new(),
+        })
+    }
+
+    fn superclass(
+        &self,
+        env: &Environment<'a>,
+    ) -> Result<Option<Self>, EvaluationError<'a>> {
+        self.superclass_binding
+            .as_ref()
+            .map_or(Ok(None), |binding| {
+                if let Value::Class(class) = env.get(binding)? {
+                    Ok(Some(class))
+                } else {
+                    Err(EvaluationError::SuperClassMustBeClass(binding.span))
+                }
+            })
+    }
+
+    /// # Errors
+    ///
+    /// Returns `Err` if any superclass is not a class, is undefined, or is uninitialised.
+    pub fn find_method(
+        &self,
+        name: &'a str,
+        env: &Environment<'a>,
+    ) -> Result<Option<FunctionType<'a>>, EvaluationError<'a>> {
+        if let Some(index) = self.methods_lookup.get(name) {
+            Ok(Some(self.methods[*index].clone()))
+        } else {
+            self.superclass(env)?.map_or(Ok(None), |superclass| {
+                superclass.find_method(name, env)
+            })
+        }
     }
 
     #[must_use]
@@ -245,35 +331,25 @@ pub struct Instance<'a> {
 
 impl<'a> Instance<'a> {
     #[must_use]
-    pub fn new(class: Class<'a>, superclass: &Option<Class<'a>>) -> Self {
-        let fields = superclass
-            .iter()
-            .flat_map(|superclass| superclass.fields())
-            .chain(class.fields())
-            .map(|(name, field)| {
-                if name == "init"
-                    && let FunctionKind::Lox(body) = &field.body
-                {
-                    (
-                        name,
-                        Value::from(FunctionType {
-                            binding: field.binding.clone(),
-                            body: FunctionKind::CustomConstructor(body.clone()),
-                            params: field.params.clone(),
-                        }),
-                    )
-                } else {
-                    (name, Value::from(field.clone()))
-                }
-            })
-            .collect::<HashMap<_, _>>();
-
-        Self { class, fields }
+    pub fn new(class: Class<'a>) -> Self {
+        Self {
+            class,
+            fields: HashMap::new(),
+        }
     }
 
-    #[must_use]
-    pub fn get(&self, target: &'a str) -> Option<&Value<'a>> {
-        self.fields.get(target)
+    /// # Errors
+    ///
+    /// Will error if any of the instance's superclasses are not classes, uninitalised or undefined
+    pub fn get(
+        &self,
+        target: &'a str,
+        env: &Environment<'a>,
+    ) -> Result<Option<Value<'a>>, EvaluationError<'a>> {
+        if let Some(value) = self.fields.get(target) {
+            return Ok(Some(value.clone()));
+        }
+        Ok(self.class.find_method(target, env)?.map(Into::into))
     }
 
     pub fn set(&mut self, target: &'a str, value: Value<'a>) {
@@ -433,6 +509,20 @@ impl<'a> Expr<'a> {
             kind: ExprKind::This(VariableBinding { span, name: "this" }),
         }
     }
+
+    #[must_use]
+    pub const fn super_expr(span: Span, target: VariableBinding<'a>) -> Self {
+        Expr {
+            span,
+            kind: ExprKind::Super {
+                binding: VariableBinding {
+                    span,
+                    name: "super",
+                },
+                target,
+            },
+        }
+    }
 }
 
 impl Display for Value<'_> {
@@ -462,7 +552,7 @@ impl Display for Value<'_> {
     }
 }
 
-impl<'a> Value<'a> {
+impl Value<'_> {
     #[must_use]
     pub const fn token_types() -> &'static [TT] {
         &[
@@ -499,30 +589,6 @@ impl<'a> Value<'a> {
             Self::Instance(instance) => {
                 format!("{} instance", instance.borrow().class.binding.name)
             }
-        }
-    }
-
-    /// # Errors
-    ///
-    /// Will error if the number is invalid
-    pub fn try_from(
-        token: &Token,
-        source: &'a str,
-    ) -> Result<Self, ValueError> {
-        let sub_string = &source[token.span.0..token.span.1];
-        match token.token_kind {
-            TT::Literal(LT::String) => {
-                Ok(Self::String(sub_string[1..sub_string.len() - 1].to_owned()))
-            }
-            TT::Keyword(KT::True) => Ok(Self::Boolean(true)),
-            TT::Keyword(KT::False) => Ok(Self::Boolean(false)),
-            TT::Literal(LT::Number) => sub_string
-                .parse::<f64>()
-                .map_or(Err(ValueError::NotANumber(token.span)), |v| {
-                    Ok(Self::Number(v))
-                }),
-            TT::Keyword(KT::Nil) => Ok(Self::Nil),
-            _ => Err(ValueError::NotAValue(token.span)),
         }
     }
 }

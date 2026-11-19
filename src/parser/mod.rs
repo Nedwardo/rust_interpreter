@@ -66,21 +66,25 @@ impl TokenCursor {
         self.tokens.peek()
     }
 
-    fn consume_if(&mut self, token_types: &[TT]) -> Result<Token, Error> {
-        self.checked_tokens.extend(token_types);
+    fn consume_if<T>(&mut self, token: T) -> Result<Token, Error>
+    where
+        T: Into<TT>,
+    {
+        let token = token.into();
+        self.checked_tokens.push(token);
         match self.tokens.peek() {
-            Some(t) if token_types.contains(&t.token_kind) => {
+            Some(t) if t.token_kind == token => {
                 self.checked_tokens.clear();
                 Ok(self.next().expect("Unwrapping peeked value"))
             }
-            Some(t) => Err(Error::unexpected_token(t, &self.checked_tokens)),
+            Some(t) => Err(Error::unexpected_token(*t, &self.checked_tokens)),
             None => Err(Error::expected_token(&self.checked_tokens)),
         }
     }
 
     fn consume_identifier_span(&mut self) -> Result<Span, Error> {
         debug!("Consume name");
-        let token = self.consume_if(&[TT::Literal(LT::Identifier)])?;
+        let token = self.consume_if(LT::Identifier)?;
         Ok(token.span)
     }
 
@@ -95,42 +99,25 @@ impl TokenCursor {
             .ok_or_else(|| Error::expected_token(&self.checked_tokens))?;
         Op::try_from(token.token_kind)
             .map(|op| (op, token.span))
-            .map_err(|_| Error::unexpected_token(token, &self.checked_tokens))
+            .map_err(|_| Error::unexpected_token(*token, &self.checked_tokens))
     }
 
     fn consume_semicolon_or_eof(&mut self) -> Result<(), Error> {
         if self.peek().is_some() {
-            self.consume_if(&[TT::Keyword(KT::Semicolon)])?;
+            self.consume_if(KT::Semicolon)?;
         }
         Ok(())
     }
 
-    fn consume_if_map_success<T: std::fmt::Debug>(
-        &mut self,
-        expected: &[TT],
-        f: impl Fn(&Token) -> Result<T, Error>,
-    ) -> Result<T, Error> {
-        self.checked_tokens.extend(expected);
-
-        let token = self
-            .tokens
-            .peek()
-            .ok_or_else(|| Error::expected_token(&self.checked_tokens))?;
-
-        let out = f(token)?;
-
-        self.next();
-        self.checked_tokens.clear();
-        Ok(out)
-    }
-
     fn unexpected(&self, token: &Token) -> Error {
-        Error::unexpected_token(token, &self.checked_tokens)
+        Error::unexpected_token(*token, &self.checked_tokens)
     }
 
     fn failed_to_match(&mut self) -> Error {
         match self.tokens.peek() {
-            Some(token) => Error::unexpected_token(token, &self.checked_tokens),
+            Some(token) => {
+                Error::unexpected_token(*token, &self.checked_tokens)
+            }
             None => Error::expected_token(&self.checked_tokens),
         }
     }
@@ -178,11 +165,7 @@ impl<'a> Parser<'a> {
         if self.tokens.peek().is_none() {
             return Err(Error::unexpected_eof("Start of statement"));
         }
-        if self
-            .tokens
-            .consume_if(&[TT::Keyword(KT::LeftBrace)])
-            .is_ok()
-        {
+        if self.tokens.consume_if(KT::LeftBrace).is_ok() {
             self.block()
         } else {
             self.keyword()
@@ -208,7 +191,7 @@ impl<'a> Parser<'a> {
             }
         }
 
-        if let Err(e) = self.tokens.consume_if(&[TT::Keyword(KT::RightBrace)]) {
+        if let Err(e) = self.tokens.consume_if(KT::RightBrace) {
             errors.push(e);
         }
 
@@ -261,17 +244,16 @@ impl<'a> Parser<'a> {
         let span = self.tokens.consume_identifier_span()?;
         let name = VariableBinding::from_span(span, self.source);
 
-        let superclass =
-            if self.tokens.consume_if(&[TT::Keyword(KT::Less)]).is_ok() {
-                Some(VariableBinding::from_span(
-                    self.tokens.consume_identifier_span()?,
-                    self.source,
-                ))
-            } else {
-                None
-            };
+        let superclass = if self.tokens.consume_if(KT::Less).is_ok() {
+            Some(VariableBinding::from_span(
+                self.tokens.consume_identifier_span()?,
+                self.source,
+            ))
+        } else {
+            None
+        };
 
-        self.tokens.consume_if(&[TT::Keyword(KT::LeftBrace)])?;
+        self.tokens.consume_if(KT::LeftBrace)?;
 
         let mut methods = Vec::new();
         while matches!(self.tokens.peek(), Some(t) if t.token_kind == LT::Identifier)
@@ -281,12 +263,10 @@ impl<'a> Parser<'a> {
             let binding = VariableBinding::from_span(span, self.source);
             methods.push(self.function(binding)?);
         }
-        self.tokens.consume_if(&[TT::Keyword(KT::RightBrace)])?;
-        Ok(Statement::ClassDeclaration(Class {
-            binding: name,
-            superclass,
-            methods,
-        }))
+        self.tokens.consume_if(KT::RightBrace)?;
+        Ok(Statement::ClassDeclaration(Class::new(
+            name, superclass, methods,
+        )))
     }
 
     fn function_declaration(
@@ -313,7 +293,7 @@ impl<'a> Parser<'a> {
         &mut self,
         binding: VariableBinding<'a>,
     ) -> Result<FunctionType<'a>, Error> {
-        self.tokens.consume_if(&[TT::Keyword(KT::LeftParen)])?;
+        self.tokens.consume_if(KT::LeftParen)?;
 
         let mut params = Vec::new();
         while let Ok(param) = self.tokens.consume_identifier_span() {
@@ -321,13 +301,13 @@ impl<'a> Parser<'a> {
             if params.len() >= 255 {
                 return Err(Error::too_many_arguments(binding.span, true));
             }
-            if self.tokens.consume_if(&[TT::Keyword(KT::Comma)]).is_err() {
+            if self.tokens.consume_if(KT::Comma).is_err() {
                 break;
             }
         }
 
-        self.tokens.consume_if(&[TT::Keyword(KT::RightParen)])?;
-        self.tokens.consume_if(&[TT::Keyword(KT::LeftBrace)])?;
+        self.tokens.consume_if(KT::RightParen)?;
+        self.tokens.consume_if(KT::LeftBrace)?;
         let body = Box::new(self.block()?);
         Ok(FunctionType {
             binding,
@@ -340,12 +320,11 @@ impl<'a> Parser<'a> {
         debug!("Declaration");
         let span = self.tokens.consume_identifier_span()?;
         let binding = VariableBinding::from_span(span, self.source);
-        let expression =
-            if self.tokens.consume_if(&[TT::Keyword(KT::Equal)]).is_ok() {
-                Some(self.expression(0)?)
-            } else {
-                None
-            };
+        let expression = if self.tokens.consume_if(KT::Equal).is_ok() {
+            Some(self.expression(0)?)
+        } else {
+            None
+        };
         Ok(Statement::Declaration {
             binding,
             expression,
@@ -354,16 +333,15 @@ impl<'a> Parser<'a> {
 
     fn if_statement(&mut self) -> Result<Statement<'a>, Error> {
         debug!("If");
-        self.tokens.consume_if(&[TT::Keyword(KT::LeftParen)])?;
+        self.tokens.consume_if(KT::LeftParen)?;
         let condition = self.expression(0)?;
-        self.tokens.consume_if(&[TT::Keyword(KT::RightParen)])?;
+        self.tokens.consume_if(KT::RightParen)?;
 
         let true_branch = Box::new(self.statement()?);
-        let false_branch =
-            match self.tokens.consume_if(&[TT::Keyword(KT::Else)]) {
-                Ok(_) => Some(Box::new(self.statement()?)),
-                Err(_) => None,
-            };
+        let false_branch = match self.tokens.consume_if(KT::Else) {
+            Ok(_) => Some(Box::new(self.statement()?)),
+            Err(_) => None,
+        };
 
         Ok(Statement::If {
             condition,
@@ -373,9 +351,9 @@ impl<'a> Parser<'a> {
     }
 
     fn while_statement(&mut self) -> Result<Statement<'a>, Error> {
-        self.tokens.consume_if(&[TT::Keyword(KT::LeftParen)])?;
+        self.tokens.consume_if(KT::LeftParen)?;
         let condition = self.expression(0)?;
-        self.tokens.consume_if(&[TT::Keyword(KT::RightParen)])?;
+        self.tokens.consume_if(KT::RightParen)?;
 
         self.loop_depth += 1;
         let body = Box::new(self.statement()?);
@@ -386,7 +364,7 @@ impl<'a> Parser<'a> {
 
     fn for_statement(&mut self) -> Result<Statement<'a>, Error> {
         debug!("For");
-        self.tokens.consume_if(&[TT::Keyword(KT::LeftParen)])?;
+        self.tokens.consume_if(KT::LeftParen)?;
 
         let mut next_token = self
             .tokens
@@ -398,13 +376,13 @@ impl<'a> Parser<'a> {
             && token.token_kind == KT::Semicolon
         {
             None
-        } else if self.tokens.consume_if(&[TT::Keyword(KT::Var)]).is_ok() {
+        } else if self.tokens.consume_if(KT::Var).is_ok() {
             Some(self.declaration()?)
         } else {
             Some(self.expression(0).map(Statement::Expression)?)
         };
 
-        self.tokens.consume_if(&[TT::Keyword(KT::Semicolon)])?;
+        self.tokens.consume_if(KT::Semicolon)?;
         debug!("For condition");
 
         next_token = self
@@ -415,7 +393,7 @@ impl<'a> Parser<'a> {
             TT::Keyword(KT::Semicolon) => None,
             _ => Some(self.expression(0)?),
         };
-        self.tokens.consume_if(&[TT::Keyword(KT::Semicolon)])?;
+        self.tokens.consume_if(KT::Semicolon)?;
         debug!("For increment");
 
         next_token = self
@@ -426,7 +404,7 @@ impl<'a> Parser<'a> {
             TT::Keyword(KT::Semicolon) => None,
             _ => Some(self.expression(0)?),
         };
-        self.tokens.consume_if(&[TT::Keyword(KT::RightParen)])?;
+        self.tokens.consume_if(KT::RightParen)?;
         debug!("For body");
 
         let body = Box::new(self.statement()?);
@@ -451,7 +429,7 @@ impl<'a> Parser<'a> {
             _ => Some(self.expression(0)?),
         };
 
-        self.tokens.consume_if(&[TT::Keyword(KT::Semicolon)])?;
+        self.tokens.consume_if(KT::Semicolon)?;
 
         Ok(Statement::Return {
             span,
@@ -466,7 +444,7 @@ impl<'a> Parser<'a> {
         debug!("Expression - {current_precedence}");
         let lhs = self.build_logical(current_precedence)?;
 
-        if let Ok(token) = self.tokens.consume_if(&[TT::Keyword(KT::Equal)]) {
+        if let Ok(token) = self.tokens.consume_if(KT::Equal) {
             let rhs = self.expression(current_precedence)?;
 
             match lhs.kind {
@@ -532,20 +510,13 @@ impl<'a> Parser<'a> {
             return Ok(Expr::unary(unary_op, expr, span));
         }
 
-        let mut expr = if let Ok(v) = self.parse_value() {
-            v
-        } else if self
-            .tokens
-            .consume_if(&[TT::Keyword(KT::LeftParen)])
-            .is_ok()
-        {
+        let mut expr = if let Ok(expr) = self.parse_value() {
+            expr
+        } else if self.tokens.consume_if(KT::LeftParen).is_ok() {
             let inner = self.expression(0)?;
-            let token =
-                self.tokens.consume_if(&[TT::Keyword(KT::RightParen)])?;
+            let token = self.tokens.consume_if(KT::RightParen)?;
             Expr::grouping(Box::new(inner), token.span)
-        } else if let Ok(token) =
-            self.tokens.consume_if(&[TT::Keyword(KT::Fun)])
-        {
+        } else if let Ok(token) = self.tokens.consume_if(KT::Fun) {
             Expr::lambda(self.function(VariableBinding {
                 span: token.span,
                 name: "lambda",
@@ -555,13 +526,9 @@ impl<'a> Parser<'a> {
         };
 
         loop {
-            if self
-                .tokens
-                .consume_if(&[TT::Keyword(KT::LeftParen)])
-                .is_ok()
-            {
+            if self.tokens.consume_if(KT::LeftParen).is_ok() {
                 expr = self.build_call(expr)?;
-            } else if self.tokens.consume_if(&[TT::Keyword(KT::Dot)]).is_ok() {
+            } else if self.tokens.consume_if(KT::Dot).is_ok() {
                 let span = self.tokens.consume_identifier_span()?;
                 let binding = VariableBinding::from_span(span, self.source);
                 expr = Expr::get(Box::new(expr), binding);
@@ -574,19 +541,54 @@ impl<'a> Parser<'a> {
 
     fn parse_value(&mut self) -> Result<Expr<'a>, Error> {
         debug!("Value");
-        self.tokens
-            .consume_if_map_success(Value::token_types(), |token| {
-                if matches!(token.token_kind, TT::Literal(LT::Identifier)) {
-                    let identifier = &self.source[token.span.0..token.span.1];
-                    Ok(Expr::identifier(identifier, token.span))
-                } else if matches!(token.token_kind, TT::Keyword(KT::This)) {
-                    Ok(Expr::this(token.span))
-                } else {
-                    let value = Value::try_from(token, self.source)
-                        .map_err(Error::value_error)?;
-                    Ok(Expr::literal(value, token.span))
+        if let Ok(span) = self.tokens.consume_identifier_span() {
+            let identifier = &self.source[span.0..span.1];
+            Ok(Expr::identifier(identifier, span))
+        } else if let Ok(token) = self.tokens.consume_if(KT::This) {
+            Ok(Expr::this(token.span))
+        } else if let Ok(token) = self.tokens.consume_if(KT::Super) {
+            let span = token.span;
+            self.tokens.consume_if(KT::Dot)?;
+            let target_span = self.tokens.consume_identifier_span()?;
+            let target_binding = VariableBinding {
+                span: target_span,
+                name: &self.source[token.span.0..token.span.1],
+            };
+
+            Ok(Expr::super_expr(span, target_binding))
+        } else {
+            self.parse_literal()
+        }
+    }
+
+    fn parse_literal(&mut self) -> Result<Expr<'a>, Error> {
+        if let Ok(token) = self.tokens.consume_if(LT::String) {
+            let sub_string = &self.source[token.span.0 + 1..token.span.1 - 1];
+            Ok(Expr::literal(
+                Value::String(sub_string.to_owned()),
+                token.span,
+            ))
+        } else if let Ok(token) = self.tokens.consume_if(KT::True) {
+            Ok(Expr::literal(Value::Boolean(true), token.span))
+        } else if let Ok(token) = self.tokens.consume_if(KT::False) {
+            Ok(Expr::literal(Value::Boolean(false), token.span))
+        } else if let Ok(token) = self.tokens.consume_if(KT::Nil) {
+            Ok(Expr::literal(Value::Nil, token.span))
+        } else if let Ok(token) = self.tokens.consume_if(LT::Number) {
+            let sub_string = &self.source[token.span.0..token.span.1];
+            sub_string.parse::<f64>().map_or_else(
+                |_e| Err(Error::not_a_number(token.span)),
+                |v| Ok(Expr::literal(Value::Number(v), token.span)),
+            )
+        } else {
+            let error = match self.tokens.peek() {
+                Some(token) => {
+                    Error::unexpected_token(*token, &self.tokens.checked_tokens)
                 }
-            })
+                None => Error::unexpected_eof("Value"),
+            };
+            Err(error)
+        }
     }
 
     fn build_call(&mut self, callee: Expr<'a>) -> Result<Expr<'a>, Error> {
@@ -603,12 +605,12 @@ impl<'a> Parser<'a> {
                     false,
                 ));
             }
-            if self.tokens.consume_if(&[TT::Keyword(KT::Comma)]).is_err() {
+            if self.tokens.consume_if(KT::Comma).is_err() {
                 break;
             }
         }
 
-        self.tokens.consume_if(&[TT::Keyword(KT::RightParen)])?;
+        self.tokens.consume_if(KT::RightParen)?;
 
         Ok(Expr::call(Box::new(callee), arguments))
     }
