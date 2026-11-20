@@ -131,7 +131,6 @@ impl<'a> Resolver<'a> {
         trace!("Defining {binding:?}");
         if let Some(scope) = self.symbol_table.last_mut() {
             let _ = scope.insert(binding, true);
-            trace!("Success");
         }
     }
 
@@ -320,15 +319,17 @@ impl<'a> Resolver<'a> {
             self.declare(token.clone())?;
             self.define(token.clone());
         }
-        let binding = if let FunctionKind::Lox(lox_body) = &function.body {
-            let prior_function_state = self.current_function_state.clone();
-            self.current_function_state = function_kind;
+        let binding = match &function.body {
+            FunctionKind::Lox(lox_body)
+            | FunctionKind::CustomConstructor(lox_body) => {
+                let prior_function_state = self.current_function_state.clone();
+                self.current_function_state = function_kind;
 
-            let lookup_map = self.resolve_statement(lox_body);
-            self.current_function_state = prior_function_state;
-            lookup_map
-        } else {
-            Ok(HashMap::new())
+                let lookup_map = self.resolve_statement(lox_body);
+                self.current_function_state = prior_function_state;
+                lookup_map
+            }
+            _ => Ok(HashMap::new()),
         };
         self.widen()?;
         binding
@@ -382,6 +383,7 @@ impl<'a> Resolver<'a> {
 
         self.current_class_state = enclosing_class_state;
 
+        trace!("{fields:?}");
         Ok(fields)
     }
 

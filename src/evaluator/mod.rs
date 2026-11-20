@@ -335,7 +335,7 @@ impl<'a, 'b, W: Write + Debug> Evaluator<'a, 'b, W> {
 
         let function_value = match callee {
             Value::Function(func) => func,
-            Value::Class(class) => class.constructor(&self.env)?,
+            Value::Class(class) => class.constructor(),
             _ => {
                 return Err(NonFunctionCalled { span });
             }
@@ -411,14 +411,13 @@ impl<'a, 'b, W: Write + Debug> Evaluator<'a, 'b, W> {
                 let eval_result = self.eval(&statement);
 
                 self.env.pop();
-                let instance = self
-                    .env
-                    .get_local("this")
-                    .expect("Constructor guarantees instance");
+                let instance = self.env.get_local("this");
                 self.env.pop();
 
                 match eval_result {
-                    Ok(_) | Err(Return { .. }) => Ok(instance),
+                    Ok(_) | Err(Return { .. }) => {
+                        Ok(instance.expect("Constructor guarantees instance"))
+                    }
                     Err(e) => Err(e),
                 }
             }

@@ -253,33 +253,18 @@ impl<'a> Class<'a> {
             methods_lookup,
         }
     }
-    /// # Errors
-    ///
-    /// Will error if any of the class's superclasses are not classes, uninitalised or undefined
-    pub fn constructor(
-        &self,
-        env: &Environment<'a>,
-    ) -> Result<FunctionValue<'a>, EvaluationError<'a>> {
-        let binding = VariableBinding {
-            span: (0, 0),
-            name: self.binding.name,
-        };
-
-        let init = if let Some(mut init) = self.find_method("init", env)? {
-            init.binding = binding;
-            init
-        } else {
-            FunctionType {
-                binding,
+    pub fn constructor(&self) -> FunctionValue<'a> {
+        FunctionValue {
+            function: FunctionType {
+                binding: VariableBinding {
+                    span: (0, 0),
+                    name: self.binding.name,
+                },
                 body: FunctionKind::Constructor(self.clone()),
                 params: Vec::new(),
-            }
-        };
-
-        Ok(FunctionValue {
-            function: init,
+            },
             closure: Frame::new(),
-        })
+        }
     }
 
     fn superclass(
